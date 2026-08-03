@@ -2,6 +2,8 @@
 
 Notes to build a small WordPress plugin for **qhta.com.au**. This is a briefing, not a rigid spec — implement it idiomatically, but keep to the scope boundary and house conventions below. Where a value is marked **TBD**, leave a clearly-commented placeholder; don't invent it.
 
+> **Status:** these are the notes the plugin was built from, kept as the statement of intent. What shipped has moved on in places — the product-ID input is now a searchable picker, and both non-entitled cases redirect to `/login/`. **CHANGELOG.md records what changed and why; README.md is the current behaviour.** Where this brief and those two disagree, they win.
+
 ---
 
 ## What this plugin is
@@ -19,6 +21,13 @@ The QHTA site has a deliberate three-plugin separation. Respect it:
 - **conference program plugin** — conference *domain logic* (session shortcodes, program data).
 - **qhta-theme-extras** — *presentation* only (Astra hooks, mega menu, global CSS tokens, sitewide display tweaks).
 - **qhta-commerce (this plugin)** — *WooCommerce-side logic*: purchase gates, and any future Woo behaviour tweaks.
+
+A fourth plugin is **planned but not yet built** (deferred — we'll come back to it): **`qhta-membership`** — a home for PMPro *domain logic* currently living as loose Code Snippets (checkout username generation, field reorder/read-only, checkout relabels, billing-field tweaks). Not part of this build; noted so the separation is understood. When built, PMPro customisations move there — not into qhta-commerce or theme-extras.
+
+**Scoping discipline (applies to all four plugins — a hard rule).** A real bug prompted this: a PMPro checkout snippet ran `document.getElementById('username')` in an unscoped `wp_footer` on *every* page and silently forced `readonly` on the WooCommerce **My Account login** field (which also has `id="username"`), locking customers out. Therefore:
+- **Page-scope every hook.** No bare site-wide `wp_footer`/`init` output. Guard with `pmpro_is_checkout()`, `is_account_page()`, `is_page(...)`, etc.
+- **No unscoped global DOM selectors.** Scope queries to the specific form container, never a bare shared `id`.
+- These rules prevent cross-page collateral damage — the reason loose snippets are being consolidated into plugins in the first place.
 
 Test for what belongs here: "is it WooCommerce behaviour that is **not** presentation and **not** conference-specific domain logic?" → qhta-commerce. Do **not** put CSS/theme concerns or conference logic in here, and do **not** put commerce logic in the other two.
 
@@ -46,8 +55,8 @@ Test for what belongs here: "is it WooCommerce behaviour that is **not** present
   - Read the current page's `_qhta_gate_product_id`.
   - **Blank / 0** → do nothing (public page).
   - **Set** → run the purchase check:
-    - **Logged out** → redirect to the sales page.
-    - **Logged in, has not bought that product** → redirect to the sales page.
+    - **Logged out** → redirect to the branded **`/login/`** page with `redirect_to` set to the gated page (so they land back here after logging in). Do **not** send them to a 404 or the sales page.
+    - **Logged in, has not bought that product** → redirect to the **sales page**.
     - **Logged in, has bought it** → allow the page to render.
 - Server-side, so it's a real gate, not client-side hiding.
 
@@ -73,7 +82,7 @@ Test for what belongs here: "is it WooCommerce behaviour that is **not** present
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
-	exit;
+    exit;
 }
 
 define( 'QHTA_COMMERCE_VERSION', '1.0.0' );
@@ -84,66 +93,87 @@ const QHTA_GATE_META = '_qhta_gate_product_id';
  * Where non-entitled visitors are sent. Filterable.
  */
 function qhta_commerce_sales_url() {
-	return apply_filters( 'qhta_commerce_sales_url', home_url( '/recordings/' ) );
+    return apply_filters( 'qhta_commerce_sales_url', home_url( '/recordings/' ) );
+}
+
+/**
+ * Login URL for logged-out visitors, returning them to $return_to after login.
+ * The site's single branded login page is /login/ (PMPro's Log In page, rebranded).
+ * PMPro's Log In page natively accepts redirect_to and returns the user there after
+ * login — the same mechanism its checkout "log in here" link uses. Filterable.
+ * NOTE: /login/ (and qhta-membership's login redirect) must honour redirect_to,
+ * or the buyer gets bounced to a fixed page instead of back to the gated page.
+ */
+function qhta_commerce_login_url( $return_to ) {
+    $default = add_query_arg( 'redirect_to', rawurlencode( $return_to ), home_url( '/login/' ) );
+    return apply_filters( 'qhta_commerce_login_url', $default, $return_to );
 }
 
 /**
  * Per-page field: "Gated by product ID".
  */
 add_action( 'add_meta_boxes', function () {
-	add_meta_box(
-		'qhta_gate',
-		'Purchase gate',
-		function ( $post ) {
-			$val = get_post_meta( $post->ID, QHTA_GATE_META, true );
-			wp_nonce_field( 'qhta_gate_save', 'qhta_gate_nonce' );
-			echo '<label for="qhta_gate_product_id"><strong>Gated by product ID</strong></label>';
-			echo '<input type="number" min="0" id="qhta_gate_product_id" name="qhta_gate_product_id" value="' . esc_attr( $val ) . '" style="width:100%;margin-top:4px">';
-			echo '<p class="description">Leave blank for a public page. Enter the WooCommerce product ID that unlocks this page.</p>';
-		},
-		'page',
-		'side'
-	);
+    add_meta_box(
+        'qhta_gate',
+        'Purchase gate',
+        function ( $post ) {
+            $val = get_post_meta( $post->ID, QHTA_GATE_META, true );
+            wp_nonce_field( 'qhta_gate_save', 'qhta_gate_nonce' );
+            echo '<label for="qhta_gate_product_id"><strong>Gated by product ID</strong></label>';
+            echo '<input type="number" min="0" id="qhta_gate_product_id" name="qhta_gate_product_id" value="' . esc_attr( $val ) . '" style="width:100%;margin-top:4px">';
+            echo '<p class="description">Leave blank for a public page. Enter the WooCommerce product ID that unlocks this page.</p>';
+        },
+        'page',
+        'side'
+    );
 } );
 
 add_action( 'save_post_page', function ( $post_id ) {
-	if ( ! isset( $_POST['qhta_gate_nonce'] ) || ! wp_verify_nonce( $_POST['qhta_gate_nonce'], 'qhta_gate_save' ) ) {
-		return;
-	}
-	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
-		return;
-	}
-	if ( ! current_user_can( 'edit_page', $post_id ) ) {
-		return;
-	}
-	$val = isset( $_POST['qhta_gate_product_id'] ) ? absint( $_POST['qhta_gate_product_id'] ) : 0;
-	if ( $val > 0 ) {
-		update_post_meta( $post_id, QHTA_GATE_META, $val );
-	} else {
-		delete_post_meta( $post_id, QHTA_GATE_META );
-	}
+    if ( ! isset( $_POST['qhta_gate_nonce'] ) || ! wp_verify_nonce( $_POST['qhta_gate_nonce'], 'qhta_gate_save' ) ) {
+        return;
+    }
+    if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+        return;
+    }
+    if ( ! current_user_can( 'edit_page', $post_id ) ) {
+        return;
+    }
+    $val = isset( $_POST['qhta_gate_product_id'] ) ? absint( $_POST['qhta_gate_product_id'] ) : 0;
+    if ( $val > 0 ) {
+        update_post_meta( $post_id, QHTA_GATE_META, $val );
+    } else {
+        delete_post_meta( $post_id, QHTA_GATE_META );
+    }
 } );
 
 /**
  * The gate: reads the current page's own field.
  */
 add_action( 'template_redirect', function () {
-	if ( ! is_page() || ! function_exists( 'wc_customer_bought_product' ) ) {
-		return;
-	}
-	$product_id = (int) get_post_meta( get_queried_object_id(), QHTA_GATE_META, true );
-	if ( $product_id <= 0 ) {
-		return; // not a gated page
-	}
-	$entitled = is_user_logged_in() && wc_customer_bought_product(
-		wp_get_current_user()->user_email,
-		get_current_user_id(),
-		$product_id
-	);
-	if ( ! $entitled ) {
-		wp_safe_redirect( qhta_commerce_sales_url() );
-		exit;
-	}
+    if ( ! is_page() || ! function_exists( 'wc_customer_bought_product' ) ) {
+        return;
+    }
+    $product_id = (int) get_post_meta( get_queried_object_id(), QHTA_GATE_META, true );
+    if ( $product_id <= 0 ) {
+        return; // not a gated page
+    }
+
+    // Logged out → send to login, returning here afterwards (not a 404, not sales).
+    if ( ! is_user_logged_in() ) {
+        wp_safe_redirect( qhta_commerce_login_url( get_permalink() ) );
+        exit;
+    }
+
+    // Logged in but hasn't bought this product → sales page.
+    $bought = wc_customer_bought_product(
+        wp_get_current_user()->user_email,
+        get_current_user_id(),
+        $product_id
+    );
+    if ( ! $bought ) {
+        wp_safe_redirect( qhta_commerce_sales_url() );
+        exit;
+    }
 } );
 ```
 
@@ -184,7 +214,7 @@ Single-file is fine for v1. If it grows (more Woo tweaks), split into an `includ
 1. Activating adds a "Purchase gate" field to the Page editor; deactivating removes all gate behaviour (stored meta can remain harmlessly).
 2. A page with the field **blank** behaves as a normal public page.
 3. A page with the field **set to a product ID**:
-   - redirects a **logged-out** visitor to the sales URL;
+   - redirects a **logged-out** visitor to the **login page**, returning them to the gated page after login (not a 404, not the sales page);
    - redirects a **logged-in non-buyer** to the sales URL;
    - renders normally for a **logged-in buyer** of that product.
 4. **Renaming the page or changing its slug** does not break the gate (it keys off page ID + meta, not slug).
