@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field. No presentation, no conference domain logic.
- * Version:           1.0.2
+ * Version:           1.0.3
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.0.2' );
+define( 'QHTA_COMMERCE_VERSION', '1.0.3' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -27,23 +27,112 @@ define( 'QHTA_COMMERCE_VERSION', '1.0.2' );
 const QHTA_GATE_META = '_qhta_gate_product_id';
 
 /**
- * Where non-entitled visitors are sent.
+ * Where a logged-in visitor who has not bought the product is sent.
  *
- * Filterable so the destination can be moved without editing the plugin:
+ * Defaults to the login page, same destination as a logged-out visitor gets —
+ * there is no sales page yet, and /login/ is a real page that says something,
+ * where the previous /not-found/ default served the theme's 404. It does not
+ * carry redirect_to: they are already signed in, so returning them here would
+ * only bounce them straight back out.
+ *
+ * Filterable, so a real sales page can take over without editing the plugin:
  *
  *   add_filter( 'qhta_commerce_sales_url', function () {
- *       return home_url( '/some-other-page/' );
+ *       return home_url( '/some-sales-page/' );
  *   } );
  *
- * Defaults to /not-found/ rather than a sales page: a non-buyer should not
- * learn that gated content exists at that URL. Point it at a real sales page if
- * that changes.
+ * Note the trade this makes: any redirect to a login or sales page reveals that
+ * *something* exists at the gated URL. The old /not-found/ default hid that, at
+ * the cost of telling a real customer their paid content does not exist. Put
+ * /not-found/ back through this filter if the quiet version is ever wanted.
  *
  * @return string
  */
 function qhta_commerce_sales_url() {
-	return apply_filters( 'qhta_commerce_sales_url', home_url( '/not-found/' ) );
+	return apply_filters( 'qhta_commerce_sales_url', home_url( '/login/' ) );
 }
+
+/**
+ * Where a logged-out visitor to a gated page is sent.
+ *
+ * The site's single branded login page, /login/ — PMPro's Log In page,
+ * rebranded — carrying the gated page as `redirect_to` so they land back on it
+ * once signed in. A buyer who is merely logged out gets in, rather than being
+ * told the page does not exist. PMPro's Log In page accepts `redirect_to`
+ * natively; it is the same mechanism its checkout "log in here" link uses.
+ *
+ * Not My Account (/my-account/ is the post-login dashboard, not where customers
+ * sign in) and not wp_login_url() (wp-login.php is a different, more
+ * administrative-looking door).
+ *
+ * Deployment dependency: /login/ — and any login redirect qhta-membership grows
+ * later — must honour redirect_to, or the buyer is bounced to a fixed page
+ * instead of back to the gated page.
+ *
+ * Like qhta_commerce_sales_url(), the destination is a plain path rather than a
+ * looked-up page, and is filterable so it can be moved without editing the
+ * plugin:
+ *
+ *   add_filter( 'qhta_commerce_login_url', function ( $url, $return_to ) {
+ *       return add_query_arg( 'redirect_to', rawurlencode( $return_to ), home_url( '/sign-in/' ) );
+ *   }, 10, 2 );
+ *
+ * Sending anyone here does reveal that *something* exists at the URL, which a
+ * /not-found/ redirect would hide. That is the trade: discretion, for buyers not
+ * getting stranded. Both destinations are filterable if the quiet version is
+ * ever wanted back.
+ *
+ * @param string $return_to URL to return the visitor to after login.
+ * @return string
+ */
+function qhta_commerce_login_url( $return_to ) {
+	// add_query_arg() does not encode values, so encode the URL here or a page
+	// with a query string of its own would corrupt the parameter.
+	$url = add_query_arg(
+		'redirect_to',
+		rawurlencode( $return_to ),
+		home_url( '/login/' )
+	);
+
+	return apply_filters( 'qhta_commerce_login_url', $url, $return_to );
+}
+
+/**
+ * Make WooCommerce's login form honour that redirect_to as well.
+ *
+ * Belt and braces: /login/ is PMPro's page and handles redirect_to itself, so
+ * this is for the other door — the login form on My Account, which a customer
+ * can still reach on their own.
+ *
+ * WC_Form_Handler::process_login() uses `$_POST['redirect']` when present, but
+ * the stock myaccount/form-login.php template never renders that field — so
+ * without this the parameter is carried to the page and then silently dropped
+ * at login. Adding the hidden field is the whole fix.
+ *
+ * Scoped by the hook itself: woocommerce_login_form only fires inside Woo's own
+ * login form, so nothing is emitted on any other page.
+ *
+ * Validated against the site's own host on the way in, so the field cannot be
+ * turned into an open redirect by handing someone a crafted login link.
+ * (WooCommerce validates again on submit; this is the near-side check.)
+ */
+function qhta_commerce_login_redirect_field() {
+	// No nonce here on purpose: this only reads a URL out of the query string
+	// and echoes it back after validating it against our own host. It changes
+	// nothing, and the login POST itself is nonce-checked by WooCommerce.
+	if ( empty( $_GET['redirect_to'] ) ) {
+		return;
+	}
+
+	$redirect = wp_validate_redirect( esc_url_raw( wp_unslash( $_GET['redirect_to'] ) ), '' );
+
+	if ( ! $redirect ) {
+		return;
+	}
+
+	printf( '<input type="hidden" name="redirect" value="%s" />', esc_url( $redirect ) );
+}
+add_action( 'woocommerce_login_form', 'qhta_commerce_login_redirect_field' );
 
 /**
  * Is WooCommerce present and far enough booted to ask about purchases?
@@ -338,18 +427,30 @@ function qhta_commerce_enforce_gate() {
 		return;
 	}
 
-	$sales_url = qhta_commerce_sales_url();
+	// Both defaults land on /login/; the difference is the return trip. Logged
+	// out is "entitlement unknown", not "not entitled", so they get redirect_to
+	// and come back here after signing in — a buyer following a link from their
+	// own confirmation email gets in rather than being told the page is missing.
+	// A logged-in non-buyer has nothing to come back for, so no redirect_to, and
+	// the destination is separately filterable for when a sales page exists.
+	// Checked after entitlement so the qhta_commerce_is_entitled filter can
+	// still let an anonymous visitor through if a future rule ever needs to.
+	$target = is_user_logged_in()
+		? qhta_commerce_sales_url()
+		: qhta_commerce_login_url( get_permalink( $page_id ) );
 
-	// A sales page that gates itself would redirect to itself forever. Fail
-	// open on that misconfiguration — a visible unlocked page is easier to
-	// diagnose than a redirect loop.
-	if ( untrailingslashit( $sales_url ) === untrailingslashit( get_permalink( $page_id ) ) ) {
+	// A page that redirects to itself would do so forever. Fail open on that
+	// misconfiguration — a visible unlocked page is easier to diagnose than a
+	// redirect loop. Reachable by gating the sales page, or by gating the login
+	// page itself. Compared without the query string, because the login URL
+	// carries redirect_to and would otherwise never match.
+	if ( untrailingslashit( strtok( $target, '?' ) ) === untrailingslashit( get_permalink( $page_id ) ) ) {
 		return;
 	}
 
 	// 302, not 301: entitlement changes. A permanent redirect would be cached
 	// by the browser and would keep bouncing the visitor after they bought.
-	wp_safe_redirect( $sales_url, 302 );
+	wp_safe_redirect( $target, 302 );
 	exit;
 }
 add_action( 'template_redirect', 'qhta_commerce_enforce_gate' );

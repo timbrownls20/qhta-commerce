@@ -26,8 +26,10 @@ Configuration lives on the page, not in code. Each Page gets a **Product** panel
 in the editor sidebar holding a searchable product picker.
 
 - **Blank** -> normal public page.
-- **A product ID** -> the page only renders for a logged-in customer who has
-  bought that product. Everyone else is redirected to `/not-found/`.
+- **A product** -> the page only renders for a logged-in customer who has bought
+  it. Everyone else is redirected:
+  - **logged out** -> `/login/` to sign in, then back to the gated page;
+  - **logged in, hasn't bought it** -> `/login/`, with no return trip.
 
 The gate reads the *current page's own* meta (`_qhta_gate_product_id`) on
 `template_redirect`. There is no central map and no slug list, which means:
@@ -100,9 +102,13 @@ its top level.
 
 ### Caching — required, not optional
 
-**Every gated page and the My Account page must be excluded from full-page
+**Every gated page, `/login/` and My Account must be excluded from full-page
 caching.** A page cache that serves a stored copy never reaches PHP, so the gate
 never runs and a cached copy of paid content can be served to a non-buyer.
+
+`/login/` matters for a second reason: it now carries a per-visitor `redirect_to`,
+so a cached copy would send the next person to whichever page the last one was
+trying to reach.
 
 The plugin sends no-cache headers on gated pages as defence in depth, but it
 cannot enforce this — headers only help caches that actually ask PHP. Configure
@@ -122,12 +128,25 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Two filters, both optional:
+Three filters, all optional:
 
 ```php
-// Move the redirect destination without editing the plugin.
+// Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
+// Point it at a real sales page once there is one.
 add_filter( 'qhta_commerce_sales_url', function () {
 	return home_url( '/some-sales-page/' );
+} );
+
+// Where a logged-out visitor is sent — defaults to /login/ with the gated page
+// as redirect_to. Move it without editing the plugin:
+add_filter( 'qhta_commerce_login_url', function ( $url, $return_to ) {
+	return add_query_arg( 'redirect_to', rawurlencode( $return_to ), home_url( '/sign-in/' ) );
+}, 10, 2 );
+
+// Or return the line below to stop offering a login and treat "logged out"
+// exactly like "hasn't bought it".
+add_filter( 'qhta_commerce_login_url', function () {
+	return qhta_commerce_sales_url();
 } );
 
 // Widen entitlement — e.g. let editors preview a gated page they haven't bought.
@@ -146,10 +165,33 @@ filter above) to preview a gated page you don't own.
   redirect would be cached by the browser and keep bouncing a visitor who has
   since bought.
 - A page that is both gated and the redirect destination would redirect to
-  itself forever, so that misconfiguration fails open instead.
-- `/not-found/` need not exist as a Page. If it doesn't, WordPress serves the
-  theme's 404, which is the intended outcome: a non-buyer sees "this page
-  doesn't exist" rather than being told there is paid content behind the URL.
+  itself forever, so that misconfiguration fails open instead. That covers
+  gating the login page as well as gating the sales page.
+- **Logged out is treated as "unknown", not "denied".** It is the only case that
+  carries `redirect_to`: a buyer who is merely signed out gets back to the page,
+  where a logged-in non-buyer has nothing to return to.
+- **Both destinations reveal that *something* exists at the gated URL.** A
+  `/not-found/` redirect — the default up to 1.0.2 — hid that, at the cost of
+  telling a real customer their paid content doesn't exist. Sending people
+  somewhere that says something was judged worth more. Both filters above take
+  it back if the quiet version is ever wanted.
+- **`/login/` must honour `redirect_to`.** It is PMPro's Log In page, rebranded,
+  and accepts the parameter natively — the same mechanism PMPro's checkout "log
+  in here" link uses. If that page is ever rebuilt, or `qhta-membership` later
+  adds a login redirect of its own, that has to keep holding or buyers land on a
+  fixed page instead of the gated one they asked for.
+- The plugin also adds a hidden `redirect` field to **WooCommerce's** login form
+  (My Account), belt and braces for the other door — Woo reads
+  `$_POST['redirect']` but its stock login template doesn't render one. Removing
+  that hook doesn't break login; it just drops people on the My Account dashboard
+  instead of the page they asked for.
+- Registration is not wired up, only login. A guest-checkout buyer who later
+  registers with the same email is entitled, but lands on My Account rather than
+  back on the gated page.
+- A logged-in non-buyer lands on `/login/` while already signed in, so whatever
+  that page shows a logged-in visitor is what they see. Worth a look once, and
+  the reason `qhta_commerce_sales_url` stays a separate filter — point it at a
+  real sales page as soon as there is one.
 - Deactivating the plugin removes all gate behaviour. Stored meta stays behind
   harmlessly and takes effect again on reactivation.
 - The meta key is underscore-prefixed (`_qhta_gate_product_id`) so it stays out
@@ -157,9 +199,9 @@ filter above) to preview a gated page you don't own.
 
 ## Open items
 
-- The redirect destination is `/not-found/`. If a real sales page is wanted
-  later, point it there via the `qhta_commerce_sales_url` filter or by editing
-  the default in `qhta_commerce_sales_url()`.
+- Non-buyers currently go to `/login/` because there is no sales page. When one
+  exists, point `qhta_commerce_sales_url` at it — filter, or edit the default in
+  `qhta_commerce_sales_url()`.
 - Confirm each page/product pairing when gating. The picker only offers real
   products, so a typo can no longer gate a page against everyone — but it will
   happily let you pick the wrong product, and that looks identical until a buyer

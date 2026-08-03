@@ -1,5 +1,57 @@
 # Changelog
 
+## 1.0.3 — 2 August 2026
+
+### Changed
+- **Non-entitled visitors now go to `/login/` instead of `/not-found/`.**
+  Logged out, they carry `redirect_to` and land back on the gated page once
+  signed in — a customer who was merely signed out is no longer told their paid
+  content does not exist. Logged in but not a buyer, they go to the same page
+  without `redirect_to`: there is nothing for them to come back to until they
+  buy.
+
+  `/login/` is the site's single branded login page — PMPro's Log In page,
+  rebranded — and accepts `redirect_to` natively, the same mechanism PMPro's
+  checkout "log in here" link uses. Not `/my-account/`, which is the post-login
+  dashboard, and not `wp_login_url()`, which is a different, more
+  administrative-looking door. Both destinations stay filterable, and stay
+  separate filters, so a real sales page can take the non-buyer case as soon as
+  there is one.
+
+### Added
+- `qhta_commerce_login_url` filter for the logged-out destination, passed the
+  return URL. Point it back at `qhta_commerce_sales_url()` to collapse the two
+  cases, or elsewhere if the login page ever moves.
+- Hidden `redirect` field on **WooCommerce's** login form, populated from
+  `redirect_to` — belt and braces for the My Account door, since /login/ handles
+  the parameter itself. `WC_Form_Handler::process_login()` honours
+  `$_POST['redirect']`, but the stock `myaccount/form-login.php` template
+  renders no such field, so the parameter would otherwise be carried to the page
+  and silently dropped at login. The value is validated against the site's own
+  host before it is echoed, so a crafted login link cannot turn it into an open
+  redirect.
+
+### Notes
+- This reverses the discretion 1.0.1 bought. Redirecting anyone to a login page
+  reveals that *something* exists at that URL, which `/not-found/` was chosen to
+  hide. Sending people somewhere that says something was judged worth more than
+  that — the content itself is no less protected either way, and `/not-found/`
+  goes back through `qhta_commerce_sales_url` if the quiet version is wanted.
+- A logged-in non-buyer lands on `/login/` while already signed in, so they see
+  whatever that page shows a logged-in visitor. Worth eyeballing once. It is the
+  case a real sales page should take over.
+- The self-redirect guard now compares without the query string, since the login
+  URL carries `redirect_to`. Gating the login page itself still fails open
+  rather than looping.
+- **Deployment dependency:** `/login/` must keep honouring `redirect_to`. If it
+  is ever rebuilt, or `qhta-membership` adds a login redirect of its own that
+  ignores the parameter, buyers land on a fixed page instead of the gated one.
+- `/login/` is excluded from full-page caching for the same reason gated pages
+  are — it now carries a per-visitor `redirect_to`.
+- Only the login form is wired up, not registration. Someone who checked out as
+  a guest and then registers with the same email is entitled, but will land on
+  My Account rather than back on the gated page.
+
 ## 1.0.2 — 1 August 2026
 
 ### Changed
