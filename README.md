@@ -1,8 +1,9 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Currently one job: **gating pages
-behind a WooCommerce purchase**, so paid content (conference recordings and the
-like) is locked without a membership plugin.
+WooCommerce-side logic plugin for qhta.com.au. Two jobs, both sides of the same
+coin: **gating pages behind a WooCommerce purchase**, so paid content
+(conference recordings and the like) is locked without a membership plugin, and
+a **"My Content" tab** in My Account listing what each customer can reach.
 
 ## Scope
 
@@ -68,6 +69,64 @@ Two things follow from that:
 What's stored is still just the product ID, so nothing changes for pages that
 were gated before the picker existed.
 
+## The "My Content" tab
+
+My Account gets a **My Content** tab, sitting immediately before Log out, at
+`/my-account/my-content/`. It lists every gated page the signed-in customer can
+currently open, each as a link.
+
+The list is **derived, never maintained**. It is "all published pages carrying
+`_qhta_gate_product_id`, filtered to the ones this customer is entitled to" —
+the same meta the gate reads, asked through the same `qhta_commerce_is_entitled()`.
+Three things follow:
+
+- gating a **new** page puts it in every entitled customer's tab with **no code
+  change** — set the page's Product field and it appears;
+- a **refund** drops the link on the next load, at the same moment it drops
+  access, because both come from the same live purchase check;
+- there are **no product IDs and no page slugs** in the tab. It cannot list a
+  page the gate would block, and it cannot miss one the gate would allow.
+
+A customer with nothing yet sees a short message and a **Browse products**
+button rather than a blank tab. That button points at WooCommerce's Shop page —
+found, not hardcoded, so moving or renaming the shop doesn't break it — and
+falls back to `qhta_commerce_sales_url()` if no Shop page is set. Point it
+somewhere else with the `qhta_commerce_browse_url` filter.
+
+The tab links to pages; it never embeds their content. Opening one runs the gate
+again, so the tab is a way *in*, not a way *round*.
+
+### Permalinks
+
+The tab is a My Account **endpoint**, so its only URL is
+`/my-account/my-content/`. `/my-content/` at the site root is not the tab and
+never renders it.
+
+Endpoints need a rewrite-rule flush before they resolve, or the URL falls
+through to the theme's 404. That happens **once per plugin version**, stamped in
+the `qhta_commerce_rewrites_version` option and checked on `wp_loaded`, so the
+first request after any upload rebuilds the rules — no Settings -> Permalinks ->
+Save Changes needed, on a fresh install or an update.
+
+Version-stamped rather than activation-only because **a plugin update never
+fires the activation hook**: uploading a zip over an active plugin deactivates
+and reactivates it silently, skipping both hooks. That is what made 1.1.0's tab
+404 until permalinks were saved by hand. Bumping `QHTA_COMMERCE_VERSION` is
+therefore what triggers the rebuild — it already has to be bumped on every
+change, so nothing extra to remember.
+
+If a tab ever 404s anyway, Settings -> Permalinks -> Save Changes is still the
+fallback, and deactivate/reactivate works too.
+
+### Performance
+
+One purchase check per gated page, per tab load. Fine for a handful of gated
+pages. If the catalogue grows to dozens and the tab feels slow, cache the result
+per user — but **not** in a plain transient: Hostinger's object cache can hold
+transients past their TTL, so a refunded customer could keep seeing the link.
+Use a `wp_options` row with `autoload=no` plus an explicit refresh, or a
+request-scoped static. Not needed at current size.
+
 ## Structure
 
 ```
@@ -110,6 +169,10 @@ never runs and a cached copy of paid content can be served to a non-buyer.
 so a cached copy would send the next person to whichever page the last one was
 trying to reach.
 
+Excluding My Account has to cover its **endpoints**, `/my-account/my-content/`
+included — the tab is a different list for every customer, and a cached copy
+would show one customer the titles of another's purchases.
+
 The plugin sends no-cache headers on gated pages as defence in depth, but it
 cannot enforce this — headers only help caches that actually ask PHP. Configure
 the exclusion at the host: hPanel -> Websites -> qhta.com.au -> Advanced ->
@@ -122,13 +185,17 @@ gate does nothing, so gated pages become public. This is deliberate — a broken
 gate should not take the whole site down — but it means deactivating Woo
 silently unlocks paid content. An admin notice flags it in wp-admin.
 
+My Account is WooCommerce's own page, so the My Content tab goes with it; the
+helper behind it returns an empty list rather than calling into functions that
+are no longer there.
+
 The editor field degrades with it: no WooCommerce means no product search, so
 the panel falls back to a plain **Product ID** number input. Same meta, same
 stored value — you just have to know the ID.
 
 ## Extension points
 
-Three filters, all optional:
+Four filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -149,7 +216,15 @@ add_filter( 'qhta_commerce_login_url', function () {
 	return qhta_commerce_sales_url();
 } );
 
+// Where the My Content empty state's "Browse products" button goes — defaults
+// to the WooCommerce Shop page.
+add_filter( 'qhta_commerce_browse_url', function () {
+	return home_url( '/recordings/' );
+} );
+
 // Widen entitlement — e.g. let editors preview a gated page they haven't bought.
+// A fourth argument carries the user ID being checked, for filters that need it;
+// three-argument callbacks like this one are unaffected.
 add_filter( 'qhta_commerce_is_entitled', function ( $entitled, $product_id, $page_id ) {
 	return $entitled || current_user_can( 'edit_post', $page_id );
 }, 10, 3 );
@@ -158,6 +233,12 @@ add_filter( 'qhta_commerce_is_entitled', function ( $entitled, $product_id, $pag
 By default **nobody** bypasses the gate, administrators included. That keeps the
 behaviour honest when testing, at the cost of having to log out (or use the
 filter above) to preview a gated page you don't own.
+
+`qhta_commerce_is_entitled` is the single definition of "entitled" — the gate
+and the My Content tab both go through it, so widening it widens both. A filter
+that lets editors preview gated pages also lists those pages in an editor's own
+My Content tab. That is intended: the tab should show what the gate would let
+you through, whatever the reason.
 
 ## Notes
 
@@ -192,8 +273,15 @@ filter above) to preview a gated page you don't own.
   that page shows a logged-in visitor is what they see. Worth a look once, and
   the reason `qhta_commerce_sales_url` stays a separate filter — point it at a
   real sales page as soon as there is one.
-- Deactivating the plugin removes all gate behaviour. Stored meta stays behind
-  harmlessly and takes effect again on reactivation.
+- Deactivating the plugin removes all gate behaviour and the My Content tab, and
+  flushes the tab's rewrite rule back out. Stored meta stays behind harmlessly
+  and takes effect again on reactivation.
+- The My Content tab lists **published** pages only. A gated page left in draft
+  or set to private will not appear, even for someone who has bought its
+  product.
+- Page **titles** are visible in the tab only to customers already entitled to
+  those pages, so the tab reveals nothing a non-buyer could not already see by
+  requesting the URL.
 - The meta key is underscore-prefixed (`_qhta_gate_product_id`) so it stays out
   of the generic Custom Fields UI. The sidebar panel is the intended way in.
 
@@ -206,3 +294,10 @@ filter above) to preview a gated page you don't own.
   products, so a typo can no longer gate a page against everyone — but it will
   happily let you pick the wrong product, and that looks identical until a buyer
   reports being locked out.
+- **Confirm the tab label**, currently "My Content", and the endpoint slug
+  `my-content` with it. The feature is general rather than recordings-specific,
+  which is why it is not named after any one product. Changing the slug needs a
+  deactivate/reactivate to flush permalinks.
+- **Confirm where "Browse products" should go.** It currently finds the
+  WooCommerce Shop page. `/recordings/`, the destination in the brief, does not
+  exist on the site — point `qhta_commerce_browse_url` at it once it does.
