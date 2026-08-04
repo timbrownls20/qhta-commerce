@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       QHTA Commerce
- * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, plus a My Account tab listing what the customer can reach. No presentation, no conference domain logic.
- * Version:           1.1.1
+ * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, and store preview mode. No presentation, no conference domain logic.
+ * Version:           1.2.0
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.1.1' );
+define( 'QHTA_COMMERCE_VERSION', '1.2.0' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -745,10 +745,378 @@ add_action( 'woocommerce_account_' . QHTA_CONTENT_ENDPOINT . '_endpoint', 'qhta_
 
 
 /* -------------------------------------------------------------------------
- * 4. Admin notice when WooCommerce is missing
+ * 4. Store preview mode
  *
- * The gate fails open without Woo, which is silent by design. Say so in the
- * admin so a deactivated WooCommerce cannot quietly unlock paid pages.
+ * The store is hidden from the public until QHTA_STORE_LIVE says otherwise, so
+ * it can be built and tested in place rather than half-deployed. While hidden:
+ * flagged nav links are dropped from rendered menus, and store URLs redirect
+ * away. Three ways to see it anyway — the live constant, being an
+ * administrator, or holding a signed preview cookie.
+ *
+ * The cookie is the reason this is not just an "admins see it" check: the
+ * buying flow has to be walked as a logged-out visitor meets it, and an
+ * administrator is exactly the wrong person to test that with.
+ *
+ * This hides the shopfront. It does not replace the purchase gate in section 2,
+ * which protects the content itself and keeps running once the store is live.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Name of the preview cookie.
+ */
+const QHTA_STORE_PREVIEW_COOKIE = 'qhta_store_preview';
+
+/**
+ * Query parameter that turns preview on and off.
+ */
+const QHTA_STORE_PREVIEW_PARAM = 'qhta-store-preview';
+
+/**
+ * Menu-item meta flagging a link as belonging to the store.
+ */
+const QHTA_STORE_LINK_META = '_qhta_store_link';
+
+/**
+ * Is the store visible to whoever is asking?
+ *
+ * Live, administrator, or preview cookie. Filterable, so visibility can be
+ * widened without editing the plugin — e.g. to let a whole role in during a
+ * staged launch:
+ *
+ *   add_filter( 'qhta_commerce_store_visible', function ( $visible ) {
+ *       return $visible || current_user_can( 'edit_posts' );
+ *   } );
+ *
+ * @return bool
+ */
+function qhta_commerce_store_visible() {
+	$visible = ( defined( 'QHTA_STORE_LIVE' ) && QHTA_STORE_LIVE )
+		|| current_user_can( 'manage_options' )
+		|| qhta_commerce_has_preview_cookie();
+
+	return (bool) apply_filters( 'qhta_commerce_store_visible', $visible );
+}
+
+/**
+ * The preview token, if one has been configured.
+ *
+ * Deliberately has no default. The token is a shared secret and this file is in
+ * version control, so a default here would be a committed password — and one
+ * every copy of the plugin shares. Undefined means preview is simply
+ * unavailable and only administrators can see the hidden store, which is the
+ * safe way to be misconfigured. Define it in wp-config.php; see the README.
+ *
+ * @return string Empty when unset or not a string.
+ */
+function qhta_commerce_preview_token() {
+	if ( ! defined( 'QHTA_STORE_PREVIEW_TOKEN' ) || ! is_string( QHTA_STORE_PREVIEW_TOKEN ) ) {
+		return '';
+	}
+
+	return QHTA_STORE_PREVIEW_TOKEN;
+}
+
+/**
+ * The value a valid preview cookie carries.
+ *
+ * wp_hash() of the token rather than the token itself, so a cookie that leaks —
+ * from a shared browser, a screenshot, a support session — does not hand over
+ * the secret that mints new ones. It is derived from the site's salts, so
+ * rotating those invalidates every outstanding preview cookie.
+ *
+ * @return string Empty when no token is configured.
+ */
+function qhta_commerce_preview_cookie_value() {
+	$token = qhta_commerce_preview_token();
+
+	return '' === $token ? '' : wp_hash( $token );
+}
+
+/**
+ * Does this request carry a valid preview cookie?
+ *
+ * @return bool
+ */
+function qhta_commerce_has_preview_cookie() {
+	$expected = qhta_commerce_preview_cookie_value();
+
+	if ( '' === $expected || empty( $_COOKIE[ QHTA_STORE_PREVIEW_COOKIE ] ) ) {
+		return false;
+	}
+
+	$cookie = $_COOKIE[ QHTA_STORE_PREVIEW_COOKIE ];
+
+	// A request can send `qhta_store_preview[]=x` to make this an array, and
+	// hash_equals() fatals on a non-string. Check before comparing.
+	if ( ! is_string( $cookie ) ) {
+		return false;
+	}
+
+	// hash_equals() rather than ===: constant-time, so the comparison cannot be
+	// used to work out a valid value a character at a time.
+	return hash_equals( $expected, $cookie );
+}
+
+/**
+ * Write (or clear) the preview cookie.
+ *
+ * SameSite=Lax and HttpOnly: nothing in the browser needs to read this, and it
+ * should not ride along on cross-site requests. Secure follows is_ssl() rather
+ * than being hardcoded, so preview still works on a plain-HTTP local copy.
+ *
+ * @param string $value   Cookie value. Empty to clear.
+ * @param int    $expires Expiry timestamp.
+ */
+function qhta_commerce_set_preview_cookie( $value, $expires ) {
+	setcookie(
+		QHTA_STORE_PREVIEW_COOKIE,
+		$value,
+		array(
+			'expires'  => $expires,
+			'path'     => defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/',
+			'domain'   => defined( 'COOKIE_DOMAIN' ) && COOKIE_DOMAIN ? COOKIE_DOMAIN : '',
+			'secure'   => is_ssl(),
+			'httponly' => true,
+			'samesite' => 'Lax',
+		)
+	);
+}
+
+/**
+ * Turn preview on or off from the query string.
+ *
+ *   ?qhta-store-preview=THE_TOKEN   sets the cookie for 30 days
+ *   ?qhta-store-preview=off         clears it
+ *
+ * No nonce: the token *is* the authentication, and the whole point is that this
+ * works for a logged-out visitor with no session to tie a nonce to. An
+ * unrecognised value is ignored silently — saying "wrong token" would confirm
+ * to anyone guessing that the parameter means something.
+ */
+function qhta_commerce_handle_preview_request() {
+	if ( ! isset( $_GET[ QHTA_STORE_PREVIEW_PARAM ] ) ) {
+		return;
+	}
+
+	$value = sanitize_text_field( wp_unslash( $_GET[ QHTA_STORE_PREVIEW_PARAM ] ) );
+
+	if ( 'off' === $value ) {
+		qhta_commerce_set_preview_cookie( '', time() - HOUR_IN_SECONDS );
+		unset( $_COOKIE[ QHTA_STORE_PREVIEW_COOKIE ] );
+
+		return;
+	}
+
+	$token = qhta_commerce_preview_token();
+
+	if ( '' === $token || ! hash_equals( $token, $value ) ) {
+		return;
+	}
+
+	$cookie = qhta_commerce_preview_cookie_value();
+
+	qhta_commerce_set_preview_cookie( $cookie, time() + 30 * DAY_IN_SECONDS );
+
+	// setcookie() only reaches the browser on the *next* request. Seed $_COOKIE
+	// as well so the click that turns preview on is already a preview request —
+	// otherwise the block below would bounce you off the very page you came to
+	// see, and it would look like the token had not worked.
+	$_COOKIE[ QHTA_STORE_PREVIEW_COOKIE ] = $cookie;
+}
+add_action( 'init', 'qhta_commerce_handle_preview_request' );
+
+/**
+ * Per-menu-item checkbox: "Store link".
+ *
+ * Which links belong to the store is an editorial question — Cart, Shop, My
+ * Content, whatever else gets added — so it is answered in Appearance -> Menus
+ * rather than by matching URLs in code, which would break the moment a page
+ * moved.
+ *
+ * @param int     $item_id Menu item ID.
+ * @param WP_Post $item    Menu item.
+ */
+function qhta_commerce_menu_item_field( $item_id, $item ) {
+	$field_id = 'qhta-store-link-' . (int) $item_id;
+	$flagged  = '1' === get_post_meta( $item_id, QHTA_STORE_LINK_META, true );
+	?>
+	<p class="description description-wide">
+		<label for="<?php echo esc_attr( $field_id ); ?>">
+			<input
+				type="checkbox"
+				id="<?php echo esc_attr( $field_id ); ?>"
+				name="qhta_store_link[<?php echo esc_attr( $item_id ); ?>]"
+				value="1"
+				<?php checked( $flagged ); ?>
+			>
+			<?php esc_html_e( 'Store link (hidden until the store is live or in preview)', 'qhta-commerce' ); ?>
+		</label>
+	</p>
+	<?php
+}
+add_action( 'wp_nav_menu_item_custom_fields', 'qhta_commerce_menu_item_field', 10, 2 );
+
+/**
+ * Save the checkbox.
+ *
+ * @param int $menu_id    Menu being saved.
+ * @param int $item_db_id Menu item being saved.
+ */
+function qhta_commerce_save_menu_item_field( $menu_id, $item_db_id ) {
+	// wp_update_nav_menu_item() also fires for programmatic updates and
+	// importers, where no checkbox was posted at all. Falling through to the
+	// delete branch there would silently unflag every store link the next time
+	// anything touched a menu in code. `menu-item-db-id` is only posted by the
+	// menu editor, so it is the marker for "a human really did save this form".
+	if ( ! isset( $_POST['menu-item-db-id'] ) ) {
+		return;
+	}
+
+	// Core nonce-checks the menu save itself (`update-nav_menu`), so this is the
+	// capability half of the house rule rather than a second nonce.
+	if ( ! current_user_can( 'edit_theme_options' ) ) {
+		return;
+	}
+
+	// Only presence is read — an unchecked box posts nothing — so the value is
+	// never used and needs no sanitising.
+	if ( isset( $_POST['qhta_store_link'][ $item_db_id ] ) ) {
+		update_post_meta( $item_db_id, QHTA_STORE_LINK_META, '1' );
+	} else {
+		delete_post_meta( $item_db_id, QHTA_STORE_LINK_META );
+	}
+}
+add_action( 'wp_update_nav_menu_item', 'qhta_commerce_save_menu_item_field', 10, 2 );
+
+/**
+ * Drop flagged links from rendered menus while the store is hidden.
+ *
+ * Descendants of a removed item go too. Hiding a parent but keeping its
+ * children would leave submenu entries hanging off nothing, which most walkers
+ * render at top level — the links would still be there, just uglier. Parents
+ * always precede their children in this array, so one pass is enough.
+ *
+ * @param array $items Menu items about to be rendered.
+ * @return array
+ */
+function qhta_commerce_filter_menu_items( $items ) {
+	if ( qhta_commerce_store_visible() ) {
+		return $items;
+	}
+
+	$removed = array();
+
+	foreach ( $items as $key => $item ) {
+		$flagged = '1' === get_post_meta( $item->ID, QHTA_STORE_LINK_META, true );
+		$orphan  = isset( $removed[ (int) $item->menu_item_parent ] );
+
+		if ( $flagged || $orphan ) {
+			$removed[ (int) $item->ID ] = true;
+			unset( $items[ $key ] );
+		}
+	}
+
+	return $items;
+}
+add_filter( 'wp_nav_menu_objects', 'qhta_commerce_filter_menu_items' );
+
+/**
+ * Is this request for something that belongs to the store?
+ *
+ * WooCommerce's four pages, plus the product catalogue, plus any gated content
+ * page.
+ *
+ * The catalogue is included on purpose, beyond the brief's list of pages:
+ * blocking the Shop page alone would shut the front door and leave every
+ * `/product/...` URL public and indexable. A hidden store that search engines
+ * can still crawl item by item is not hidden.
+ *
+ * @return bool
+ */
+function qhta_commerce_is_store_request() {
+	if ( is_post_type_archive( 'product' ) || is_singular( 'product' ) ) {
+		return true;
+	}
+
+	if ( is_tax( array( 'product_cat', 'product_tag' ) ) ) {
+		return true;
+	}
+
+	$page_id = get_queried_object_id();
+
+	if ( ! $page_id ) {
+		return false;
+	}
+
+	// wc_get_page_id() returns -1 for a page that has never been set, so filter
+	// on > 0 rather than on truthiness.
+	$store_pages = array_filter(
+		array(
+			(int) wc_get_page_id( 'cart' ),
+			(int) wc_get_page_id( 'checkout' ),
+			(int) wc_get_page_id( 'myaccount' ),
+			(int) wc_get_page_id( 'shop' ),
+		),
+		static function ( $id ) {
+			return $id > 0;
+		}
+	);
+
+	if ( in_array( (int) $page_id, $store_pages, true ) ) {
+		return true;
+	}
+
+	// Gated pages are part of the store: hidden with it, then protected by the
+	// gate once it is live.
+	return (int) get_post_meta( $page_id, QHTA_GATE_META, true ) > 0;
+}
+
+/**
+ * Redirect store URLs away while the store is hidden.
+ *
+ * Priority 5, ahead of the gate at 10: a hidden store should send a logged-out
+ * visitor home, not to /login/ to sign in for content that is not on sale yet.
+ *
+ * Fails open without WooCommerce, matching the gate — see the README. With Woo
+ * gone there is no store to hide.
+ */
+function qhta_commerce_block_store_pages() {
+	if ( is_admin() || qhta_commerce_store_visible() ) {
+		return;
+	}
+
+	if ( ! qhta_commerce_woo_active() || ! function_exists( 'wc_get_page_id' ) ) {
+		return;
+	}
+
+	if ( ! qhta_commerce_is_store_request() ) {
+		return;
+	}
+
+	$target = apply_filters( 'qhta_commerce_store_hidden_redirect', home_url( '/' ) );
+
+	// Same guard as the gate: a destination that is itself blocked would
+	// redirect to itself forever. Fail open on that misconfiguration — reachable
+	// by pointing this at a "coming soon" page and then gating it.
+	$here = get_queried_object_id() ? get_permalink( get_queried_object_id() ) : '';
+
+	if ( $here && untrailingslashit( strtok( $target, '?' ) ) === untrailingslashit( $here ) ) {
+		return;
+	}
+
+	// 302, like the gate: this is a temporary state by definition, and a 301
+	// would sit in browser caches long after go-live.
+	wp_safe_redirect( $target, 302 );
+	exit;
+}
+add_action( 'template_redirect', 'qhta_commerce_block_store_pages', 5 );
+
+
+/* -------------------------------------------------------------------------
+ * 5. Admin notices
+ *
+ * Both states this plugin can be in that look fine from wp-admin and are not:
+ * a gate that is not being enforced, and a store the public cannot see.
  * ---------------------------------------------------------------------- */
 
 /**
@@ -768,3 +1136,33 @@ function qhta_commerce_woo_missing_notice() {
 	<?php
 }
 add_action( 'admin_notices', 'qhta_commerce_woo_missing_notice' );
+
+/**
+ * Say in wp-admin that the store is hidden.
+ *
+ * An administrator always sees the store, so from wp-admin a hidden store and a
+ * live one look identical — which is exactly how a launch gets forgotten, or
+ * how "the shop is broken for customers" gets reported weeks later. This is the
+ * only thing that tells the difference.
+ *
+ * Keyed off the live constant directly rather than qhta_commerce_store_visible(),
+ * which by definition returns true for whoever is reading this.
+ */
+function qhta_commerce_store_hidden_notice() {
+	if ( ! current_user_can( 'manage_options' ) ) {
+		return;
+	}
+
+	if ( defined( 'QHTA_STORE_LIVE' ) && QHTA_STORE_LIVE ) {
+		return;
+	}
+	?>
+	<div class="notice notice-info">
+		<p>
+			<strong><?php esc_html_e( 'QHTA Commerce:', 'qhta-commerce' ); ?></strong>
+			<?php esc_html_e( 'The store is hidden from the public — store nav links are removed and store pages redirect away. You can see it because you are an administrator. Set QHTA_STORE_LIVE to true in wp-config.php to go live.', 'qhta-commerce' ); ?>
+		</p>
+	</div>
+	<?php
+}
+add_action( 'admin_notices', 'qhta_commerce_store_hidden_notice' );

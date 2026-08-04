@@ -1,9 +1,12 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Two jobs, both sides of the same
-coin: **gating pages behind a WooCommerce purchase**, so paid content
-(conference recordings and the like) is locked without a membership plugin, and
-a **"My Content" tab** in My Account listing what each customer can reach.
+WooCommerce-side logic plugin for qhta.com.au. Three jobs:
+
+- **gating pages behind a WooCommerce purchase**, so paid content (conference
+  recordings and the like) is locked without a membership plugin;
+- a **"My Content" tab** in My Account listing what each customer can reach;
+- **store preview mode** — the store stays hidden from the public until it is
+  switched live, while remaining fully testable, including logged out.
 
 ## Scope
 
@@ -127,6 +130,117 @@ transients past their TTL, so a refunded customer could keep seeing the link.
 Use a `wp_options` row with `autoload=no` plus an explicit refresh, or a
 request-scoped static. Not needed at current size.
 
+## Store preview mode
+
+The store is **hidden from the public by default** — built, populated and
+working, but invisible — so it can be finished and tested on the live site
+rather than half-deployed. Going live is one constant.
+
+While hidden:
+
+- nav links **flagged as store links** are removed from rendered menus;
+- store URLs **redirect home**: Cart, Checkout, My Account, Shop, the whole
+  product catalogue (`/product/...`, product categories and tags), and every
+  gated content page.
+
+### Who sees it anyway
+
+Any one of these reveals it:
+
+1. **Live** — the `QHTA_STORE_LIVE` constant is `true`. Everyone sees it.
+2. **Administrator** — anyone with `manage_options`, for convenience while
+   signed in.
+3. **Preview cookie** — the "test it as a customer would meet it" path, below.
+
+### Preview, logged out
+
+An administrator is the wrong person to test a shopfront with, so preview does
+not depend on being logged in. Visiting a URL carrying the secret token sets a
+cookie, and that browser sees the store — signed out, in incognito, on a phone:
+
+```
+https://qhta.com.au/?qhta-store-preview=THE_TOKEN   turn on  (30 days)
+https://qhta.com.au/?qhta-store-preview=off         turn off
+```
+
+It takes effect on that same request, so the link you click lands where you
+expect rather than bouncing home.
+
+The cookie holds `wp_hash( token )`, never the token, and is compared with
+`hash_equals()`, so it cannot be guessed or forged, and a leaked cookie does not
+hand over the secret that mints new ones. It is derived from the site's salts —
+rotating those signs everyone out of preview.
+
+### The token
+
+Define it in **`wp-config.php`**, above the "stop editing" line:
+
+```php
+define( 'QHTA_STORE_PREVIEW_TOKEN', 'some-long-random-string' );
+```
+
+**Not in the plugin** — this repo is in version control, and a token committed
+here would be a shared, published password. There is deliberately **no
+default**: with the constant unset, preview is simply unavailable and only
+administrators can see the hidden store. That is the safe way to be
+misconfigured.
+
+Generate one with `wp eval 'echo wp_generate_password( 32, false );'` or any
+random string of that order. Treat it like a password: it sits in the URL, so it
+lands in browser history, server access logs and any referrer sent to another
+site. Rotate it after launch, or just drop the constant.
+
+### Going live
+
+```php
+define( 'QHTA_STORE_LIVE', true );   // wp-config.php
+```
+
+A deploy action rather than an admin checkbox, deliberately: launching is not
+something to do by mis-clicking, and the constant is visible in the code review
+that ships it. **Confirm this is the wanted mechanism** — a checkbox is a small
+change if not.
+
+While it is `false` or undefined, the store is preview-only. An admin notice in
+wp-admin says so, because to an administrator a hidden store and a live one look
+identical, and that is how a launch gets forgotten.
+
+### Flagging the nav links
+
+Appearance -> Menus -> expand a menu item -> tick **"Store link (hidden until
+the store is live or in preview)"**. Flag Cart, Shop, My Content and anything
+else that only makes sense once the store is live.
+
+Editorial rather than automatic, because "which links are store links" is a
+judgement, and matching URLs in code would break the moment a page moved.
+Unflagged items are never touched. Hiding an item hides its submenu items too,
+so a flagged parent does not leave its children dangling at top level.
+
+### Caching — this is the part that bites
+
+Full-page caching serves a stored copy without consulting the cookie, so **the
+logged-out preview does not work under cache**, and after go-live a cached
+"redirected away" response can still be served to real buyers.
+
+Exclude from full-page caching: **Cart, Checkout, Shop, My Account (and its
+endpoints), and the gated pages.** The last two are already excluded for the
+gate's sake — cart, checkout and shop are the ones this feature adds.
+
+Admin preview is unaffected, since admins bypass the cache anyway. The
+exclusions are what make the *cookie* preview work, and what keep behaviour
+correct after launch.
+
+### Known limits
+
+- Products are blocked from being *viewed*, but a hidden store's products can
+  still surface in **site search results and the WordPress sitemap** as titles.
+  Clicking through redirects home. If that matters before launch, exclude
+  products from search and sitemaps at the theme or SEO-plugin level — it is
+  presentation and indexing, not commerce logic, so it does not live here.
+- **Without WooCommerce the blocking fails open**, matching the gate: no fatal,
+  and nothing is hidden. There is no store to hide in that state, and the admin
+  notice already flags it.
+
 ## Structure
 
 ```
@@ -161,9 +275,14 @@ its top level.
 
 ### Caching — required, not optional
 
-**Every gated page, `/login/` and My Account must be excluded from full-page
-caching.** A page cache that serves a stored copy never reaches PHP, so the gate
-never runs and a cached copy of paid content can be served to a non-buyer.
+**Every gated page, `/login/`, My Account, Cart, Checkout and Shop must be
+excluded from full-page caching.** A page cache that serves a stored copy never
+reaches PHP, so the gate never runs and a cached copy of paid content can be
+served to a non-buyer.
+
+Cart, Checkout and Shop are on that list for store preview mode (see above): a
+cache that ignores the preview cookie breaks the logged-out preview, and can
+serve a stale "store hidden" redirect to real buyers after go-live.
 
 `/login/` matters for a second reason: it now carries a per-visitor `redirect_to`,
 so a cached copy would send the next person to whichever page the last one was
@@ -195,7 +314,7 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Four filters, all optional:
+Six filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -220,6 +339,19 @@ add_filter( 'qhta_commerce_login_url', function () {
 // to the WooCommerce Shop page.
 add_filter( 'qhta_commerce_browse_url', function () {
 	return home_url( '/recordings/' );
+} );
+
+// Widen who can see the hidden store — e.g. let every logged-in editor in
+// during a staged launch.
+add_filter( 'qhta_commerce_store_visible', function ( $visible ) {
+	return $visible || current_user_can( 'edit_posts' );
+} );
+
+// Where a blocked store URL goes while the store is hidden — defaults to home.
+// Point it at a "coming soon" page if there is one (don't gate that page, or
+// the self-redirect guard will fail it open).
+add_filter( 'qhta_commerce_store_hidden_redirect', function () {
+	return home_url( '/coming-soon/' );
 } );
 
 // Widen entitlement — e.g. let editors preview a gated page they haven't bought.
@@ -301,3 +433,14 @@ you through, whatever the reason.
 - **Confirm where "Browse products" should go.** It currently finds the
   WooCommerce Shop page. `/recordings/`, the destination in the brief, does not
   exist on the site — point `qhta_commerce_browse_url` at it once it does.
+- **Set `QHTA_STORE_PREVIEW_TOKEN` in `wp-config.php`**, or the logged-out
+  preview cannot be used at all. Nothing breaks without it; only administrators
+  can see the hidden store.
+- **Confirm `QHTA_STORE_LIVE` is the wanted go-live mechanism** (a constant in
+  `wp-config.php`) rather than an admin checkbox.
+- **Confirm where blocked store URLs should land** — currently home. A "coming
+  soon" page goes in via `qhta_commerce_store_hidden_redirect`.
+- **Flag the store nav links** in Appearance -> Menus before relying on the
+  hidden state. Nothing is flagged by default, so until that is done the links
+  stay visible even though the pages behind them redirect.
+- Add **Cart, Checkout and Shop** to the Hostinger cache exclusions.

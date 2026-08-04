@@ -1,5 +1,84 @@
 # Changelog
 
+## 1.2.0 — 4 August 2026
+
+### Added
+- **Store preview mode.** The store is hidden from the public by default —
+  built and working, but invisible — so it can be finished and tested on the
+  live site rather than half-deployed. While hidden, nav links flagged as store
+  links are dropped from rendered menus and store URLs redirect home.
+
+  It is visible when any one of these holds: `QHTA_STORE_LIVE` is `true`, the
+  visitor can `manage_options`, or the browser carries a valid preview cookie.
+  `qhta_commerce_store_visible()` is the single answer to that question and is
+  filterable.
+- **Logged-out preview via a signed cookie.**
+  `?qhta-store-preview=THE_TOKEN` sets it for 30 days, `?qhta-store-preview=off`
+  clears it. This is the point of the feature: an administrator is the wrong
+  person to test a shopfront with, so preview cannot depend on being signed in.
+
+  The cookie holds `wp_hash( token )` rather than the token, compared with
+  `hash_equals()` — unforgeable, and a leaked cookie does not hand over the
+  secret that mints new ones. It is seeded into `$_COOKIE` as it is set, so the
+  request that turns preview on is already a preview request and the link you
+  click does not bounce you home.
+
+  `QHTA_STORE_PREVIEW_TOKEN` has **no default and is not defined in the
+  plugin** — this repo is in version control and a default would be a
+  committed, shared password. Undefined means preview is unavailable and only
+  administrators see the store: the safe way to be misconfigured. It goes in
+  `wp-config.php`.
+- **Per-menu-item "Store link" checkbox** in Appearance -> Menus, stored as
+  `_qhta_store_link`. Editorial rather than automatic, because which links
+  belong to the store is a judgement and matching URLs in code would break the
+  moment a page moved. Unflagged items are never touched.
+- **Blocking on `template_redirect`** at priority 5, ahead of the gate at 10: a
+  hidden store should send a logged-out visitor home, not to `/login/` to sign
+  in for content that is not on sale yet. Carries the gate's self-redirect
+  guard, so pointing the destination at a page that is itself blocked fails open
+  instead of looping.
+- **Admin notice while the store is hidden.** An administrator always sees the
+  store, so from wp-admin hidden and live look identical — which is how a launch
+  gets forgotten, or how "the shop is broken" gets reported weeks later.
+- `qhta_commerce_store_visible` and `qhta_commerce_store_hidden_redirect`
+  filters.
+
+### Changed
+- **Blocking covers the product catalogue, not just the four WooCommerce
+  pages.** The brief listed Cart, Checkout, My Account, Shop and the gated
+  pages; single products, `/product/` archives and product category/tag
+  archives are blocked too. Shutting the Shop page alone would leave every
+  `/product/...` URL public and indexable — a store search engines can crawl
+  item by item is not hidden. Say if this is wider than wanted.
+
+### Notes
+- **Caching, and this one bites.** Full-page caching serves a stored copy
+  without consulting the cookie, so the logged-out preview does not work under
+  cache and a stale "redirected away" response can reach real buyers after
+  go-live. **Cart, Checkout and Shop now need excluding too** — gated pages,
+  `/login/` and My Account already are. Admin preview is unaffected; admins
+  bypass the cache.
+- The token sits in a URL, so it reaches browser history, server access logs and
+  any referrer sent off-site. Treat it as a password and rotate or drop it after
+  launch.
+- The preview cookie is derived from the site's salts, so rotating those signs
+  everyone out of preview.
+- Hiding a flagged menu item hides its descendants, so a flagged parent does not
+  leave its children rendering at top level.
+- The menu-item save only runs when `menu-item-db-id` is posted — i.e. a real
+  save from the menu editor. `wp_update_nav_menu_item` also fires for
+  programmatic updates and importers, where nothing was posted, and falling
+  through to the delete branch would have silently unflagged every store link.
+- Products can still appear as titles in **site search and the WordPress
+  sitemap** while hidden; clicking through redirects home. Excluding them from
+  search and indexing is presentation, not commerce logic, so it belongs in the
+  theme or an SEO plugin rather than here.
+- Without WooCommerce the blocking fails **open**, matching the gate. Nothing is
+  hidden, nothing fatals, and the existing admin notice already flags the state.
+- **Confirm:** that `QHTA_STORE_LIVE` in `wp-config.php` is the wanted go-live
+  mechanism rather than an admin checkbox, and that blocked URLs should land on
+  the home page rather than a "coming soon" page.
+
 ## 1.1.1 — 4 August 2026
 
 ### Fixed
