@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, and store preview mode. No presentation, no conference domain logic.
- * Version:           1.2.0
+ * Version:           1.2.1
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.2.0' );
+define( 'QHTA_COMMERCE_VERSION', '1.2.1' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -750,12 +750,19 @@ add_action( 'woocommerce_account_' . QHTA_CONTENT_ENDPOINT . '_endpoint', 'qhta_
  * The store is hidden from the public until QHTA_STORE_LIVE says otherwise, so
  * it can be built and tested in place rather than half-deployed. While hidden:
  * flagged nav links are dropped from rendered menus, and store URLs redirect
- * away. Three ways to see it anyway — the live constant, being an
- * administrator, or holding a signed preview cookie.
+ * away. Two ways to see it anyway — the live constant, or holding a signed
+ * preview cookie.
  *
- * The cookie is the reason this is not just an "admins see it" check: the
- * buying flow has to be walked as a logged-out visitor meets it, and an
- * administrator is exactly the wrong person to test that with.
+ * Being an administrator is deliberately not one of them. Hidden means hidden,
+ * for everyone: the buying flow has to be walked as a logged-out visitor meets
+ * it, and an administrator is exactly the wrong person to test that with. An
+ * account that sees a different site from the one it is launching cannot tell
+ * whether the launch worked. This matches the gate in section 2, which no role
+ * bypasses either.
+ *
+ * An administrator who wants to look at the hidden store takes the preview
+ * cookie like anybody else. wp-admin is untouched — the store can still be
+ * built, priced and edited while the shopfront stays dark.
  *
  * This hides the shopfront. It does not replace the purchase gate in section 2,
  * which protects the content itself and keeps running once the store is live.
@@ -779,9 +786,9 @@ const QHTA_STORE_LINK_META = '_qhta_store_link';
 /**
  * Is the store visible to whoever is asking?
  *
- * Live, administrator, or preview cookie. Filterable, so visibility can be
- * widened without editing the plugin — e.g. to let a whole role in during a
- * staged launch:
+ * Live or preview cookie — capabilities do not come into it. Filterable, so
+ * visibility can be widened without editing the plugin if that is ever wanted —
+ * e.g. to let a whole role in during a staged launch:
  *
  *   add_filter( 'qhta_commerce_store_visible', function ( $visible ) {
  *       return $visible || current_user_can( 'edit_posts' );
@@ -791,7 +798,6 @@ const QHTA_STORE_LINK_META = '_qhta_store_link';
  */
 function qhta_commerce_store_visible() {
 	$visible = ( defined( 'QHTA_STORE_LIVE' ) && QHTA_STORE_LIVE )
-		|| current_user_can( 'manage_options' )
 		|| qhta_commerce_has_preview_cookie();
 
 	return (bool) apply_filters( 'qhta_commerce_store_visible', $visible );
@@ -803,8 +809,11 @@ function qhta_commerce_store_visible() {
  * Deliberately has no default. The token is a shared secret and this file is in
  * version control, so a default here would be a committed password — and one
  * every copy of the plugin shares. Undefined means preview is simply
- * unavailable and only administrators can see the hidden store, which is the
- * safe way to be misconfigured. Define it in wp-config.php; see the README.
+ * unavailable and nobody at all sees the hidden shopfront until QHTA_STORE_LIVE
+ * goes true, which is the safe way to be misconfigured — a missing secret
+ * should shut a door, not open one. That is not a lockout: wp-admin never
+ * redirects, so the store is still fully editable. Define it in wp-config.php;
+ * see the README.
  *
  * @return string Empty when unset or not a string.
  */
@@ -1140,13 +1149,14 @@ add_action( 'admin_notices', 'qhta_commerce_woo_missing_notice' );
 /**
  * Say in wp-admin that the store is hidden.
  *
- * An administrator always sees the store, so from wp-admin a hidden store and a
- * live one look identical — which is exactly how a launch gets forgotten, or
- * how "the shop is broken for customers" gets reported weeks later. This is the
- * only thing that tells the difference.
+ * wp-admin looks the same either way — the products, orders and pages are all
+ * there whether or not the public can reach any of it — which is exactly how a
+ * launch gets forgotten, or how "the shop is broken for customers" gets
+ * reported weeks later. This is the only thing that tells the difference.
  *
- * Keyed off the live constant directly rather than qhta_commerce_store_visible(),
- * which by definition returns true for whoever is reading this.
+ * Keyed off the live constant directly rather than qhta_commerce_store_visible():
+ * an administrator holding a preview cookie is still looking at a store the
+ * public cannot see, and that is precisely when this needs saying.
  */
 function qhta_commerce_store_hidden_notice() {
 	if ( ! current_user_can( 'manage_options' ) ) {
@@ -1160,7 +1170,7 @@ function qhta_commerce_store_hidden_notice() {
 	<div class="notice notice-info">
 		<p>
 			<strong><?php esc_html_e( 'QHTA Commerce:', 'qhta-commerce' ); ?></strong>
-			<?php esc_html_e( 'The store is hidden from the public — store nav links are removed and store pages redirect away. You can see it because you are an administrator. Set QHTA_STORE_LIVE to true in wp-config.php to go live.', 'qhta-commerce' ); ?>
+			<?php esc_html_e( 'The store is hidden — store nav links are removed and store pages redirect away, for everyone including you. To look at it, use the preview link with the QHTA_STORE_PREVIEW_TOKEN secret. Set QHTA_STORE_LIVE to true in wp-config.php to go live.', 'qhta-commerce' ); ?>
 		</p>
 	</div>
 	<?php

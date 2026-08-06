@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.2.1 — 7 August 2026
+
+### Changed
+- **Administrators no longer bypass store preview mode.** `manage_options` is
+  gone from `qhta_commerce_store_visible()`; the store is visible when
+  `QHTA_STORE_LIVE` is `true` or the browser carries a valid preview cookie, and
+  capabilities do not come into it. While hidden, store nav links are dropped
+  and store URLs redirect home for administrators exactly as they do for the
+  public.
+
+  The bypass was there for convenience and it works against the point of the
+  feature: an account that sees a different site from the one it is launching
+  cannot tell whether the launch worked, and "looks fine when I check it" is how
+  a broken shopfront survives to go-live. This also brings preview mode in line
+  with the purchase gate, which no role bypasses either.
+
+  An administrator who wants to see the hidden store takes the preview cookie
+  like anybody else. wp-admin is untouched — nothing there redirects — so the
+  store is still fully buildable while hidden.
+
+  **`QHTA_STORE_PREVIEW_TOKEN` is now effectively required**, not optional. It
+  was the fallback that made an unset token harmless; with no bypass left, an
+  unset token means the hidden shopfront cannot be viewed by anyone until
+  go-live. Still fail-closed, which is the right direction to fail, but set it.
+
+  **Editor Preview on a gated page is caught by this too.** The Preview button
+  produces an ordinary front-end request, so while the store is hidden and the
+  browser has no preview cookie it redirects home like any other store URL. Turn
+  preview on first. Say if that one wants an exception — it would be the one
+  piece of admin special-casing left, so it is not in by default.
+- **Admin notice reworded** to match: it no longer claims the reader can see the
+  store, and points at the preview link instead. It still keys off
+  `QHTA_STORE_LIVE` rather than `qhta_commerce_store_visible()` — an admin
+  holding a preview cookie is still looking at a store the public cannot see,
+  which is exactly when the notice needs saying.
+
 ## 1.2.0 — 4 August 2026
 
 ### Added
@@ -11,7 +47,7 @@
   It is visible when any one of these holds: `QHTA_STORE_LIVE` is `true`, the
   visitor can `manage_options`, or the browser carries a valid preview cookie.
   `qhta_commerce_store_visible()` is the single answer to that question and is
-  filterable.
+  filterable. (The `manage_options` bypass was removed in 1.2.1.)
 - **Logged-out preview via a signed cookie.**
   `?qhta-store-preview=THE_TOKEN` sets it for 30 days, `?qhta-store-preview=off`
   clears it. This is the point of the feature: an administrator is the wrong
@@ -25,9 +61,8 @@
 
   `QHTA_STORE_PREVIEW_TOKEN` has **no default and is not defined in the
   plugin** — this repo is in version control and a default would be a
-  committed, shared password. Undefined means preview is unavailable and only
-  administrators see the store: the safe way to be misconfigured. It goes in
-  `wp-config.php`.
+  committed, shared password. Undefined means preview is unavailable: the safe
+  way to be misconfigured. It goes in `wp-config.php`.
 - **Per-menu-item "Store link" checkbox** in Appearance -> Menus, stored as
   `_qhta_store_link`. Editorial rather than automatic, because which links
   belong to the store is a judgement and matching URLs in code would break the
@@ -37,9 +72,9 @@
   in for content that is not on sale yet. Carries the gate's self-redirect
   guard, so pointing the destination at a page that is itself blocked fails open
   instead of looping.
-- **Admin notice while the store is hidden.** An administrator always sees the
-  store, so from wp-admin hidden and live look identical — which is how a launch
-  gets forgotten, or how "the shop is broken" gets reported weeks later.
+- **Admin notice while the store is hidden.** From wp-admin, hidden and live
+  look identical — which is how a launch gets forgotten, or how "the shop is
+  broken" gets reported weeks later.
 - `qhta_commerce_store_visible` and `qhta_commerce_store_hidden_redirect`
   filters.
 
@@ -56,8 +91,8 @@
   without consulting the cookie, so the logged-out preview does not work under
   cache and a stale "redirected away" response can reach real buyers after
   go-live. **Cart, Checkout and Shop now need excluding too** — gated pages,
-  `/login/` and My Account already are. Admin preview is unaffected; admins
-  bypass the cache.
+  `/login/` and My Account already are. (As of 1.2.1 the cookie is the only
+  preview there is, so these exclusions are what make preview work at all.)
 - The token sits in a URL, so it reaches browser history, server access logs and
   any referrer sent off-site. Treat it as a password and rotate or drop it after
   launch.

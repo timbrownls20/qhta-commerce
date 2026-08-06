@@ -145,18 +145,30 @@ While hidden:
 
 ### Who sees it anyway
 
-Any one of these reveals it:
+Either of these reveals it:
 
 1. **Live** — the `QHTA_STORE_LIVE` constant is `true`. Everyone sees it.
-2. **Administrator** — anyone with `manage_options`, for convenience while
-   signed in.
-3. **Preview cookie** — the "test it as a customer would meet it" path, below.
+2. **Preview cookie** — the "test it as a customer would meet it" path, below.
+
+**Being an administrator is not one of them.** Hidden means hidden, for
+everyone: an account that sees a different site from the one it is launching
+cannot tell whether the launch worked, and the buying flow has to be walked as a
+logged-out visitor meets it. An admin who wants to look at the hidden store
+takes the preview cookie like anybody else. This matches the purchase gate,
+which no role bypasses either.
+
+wp-admin is untouched — products, orders and pages are all still there, so the
+store can be built and priced while the shopfront stays dark. What an admin
+loses is the *front end*: while the store is hidden and the browser has no
+preview cookie, store URLs redirect home for them too. That includes the
+**Preview** button on a gated page in the editor, which is a front-end request
+like any other. Turn preview on first and it behaves normally.
 
 ### Preview, logged out
 
-An administrator is the wrong person to test a shopfront with, so preview does
-not depend on being logged in. Visiting a URL carrying the secret token sets a
-cookie, and that browser sees the store — signed out, in incognito, on a phone:
+Preview does not depend on being logged in — that is the point of it. Visiting a
+URL carrying the secret token sets a cookie, and that browser sees the store —
+signed out, in incognito, on a phone:
 
 ```
 https://qhta.com.au/?qhta-store-preview=THE_TOKEN   turn on  (30 days)
@@ -181,9 +193,10 @@ define( 'QHTA_STORE_PREVIEW_TOKEN', 'some-long-random-string' );
 
 **Not in the plugin** — this repo is in version control, and a token committed
 here would be a shared, published password. There is deliberately **no
-default**: with the constant unset, preview is simply unavailable and only
-administrators can see the hidden store. That is the safe way to be
-misconfigured.
+default**: with the constant unset, preview is simply unavailable and nobody at
+all sees the hidden shopfront until go-live. That is the safe way to be
+misconfigured — a missing secret should shut a door, not open one — and it is
+not a lockout, since wp-admin never redirects.
 
 Generate one with `wp eval 'echo wp_generate_password( 32, false );'` or any
 random string of that order. Treat it like a password: it sits in the URL, so it
@@ -202,8 +215,8 @@ that ships it. **Confirm this is the wanted mechanism** — a checkbox is a smal
 change if not.
 
 While it is `false` or undefined, the store is preview-only. An admin notice in
-wp-admin says so, because to an administrator a hidden store and a live one look
-identical, and that is how a launch gets forgotten.
+wp-admin says so, because wp-admin looks the same either way and that is how a
+launch gets forgotten.
 
 ### Flagging the nav links
 
@@ -226,9 +239,9 @@ Exclude from full-page caching: **Cart, Checkout, Shop, My Account (and its
 endpoints), and the gated pages.** The last two are already excluded for the
 gate's sake — cart, checkout and shop are the ones this feature adds.
 
-Admin preview is unaffected, since admins bypass the cache anyway. The
-exclusions are what make the *cookie* preview work, and what keep behaviour
-correct after launch.
+There is no admin-bypass path to fall back on, so the cookie is the only
+preview there is and these exclusions are what make it work at all — as well as
+what keeps behaviour correct after launch.
 
 ### Known limits
 
@@ -433,9 +446,11 @@ you through, whatever the reason.
 - **Confirm where "Browse products" should go.** It currently finds the
   WooCommerce Shop page. `/recordings/`, the destination in the brief, does not
   exist on the site — point `qhta_commerce_browse_url` at it once it does.
-- **Set `QHTA_STORE_PREVIEW_TOKEN` in `wp-config.php`**, or the logged-out
-  preview cannot be used at all. Nothing breaks without it; only administrators
-  can see the hidden store.
+- **Set `QHTA_STORE_PREVIEW_TOKEN` in `wp-config.php`.** Now effectively
+  required rather than optional: with no admin bypass, the cookie is the only
+  way to see the hidden store, so without the token the shopfront cannot be
+  looked at at all before go-live. Nothing breaks without it — wp-admin is
+  unaffected — but there is nothing to test with.
 - **Confirm `QHTA_STORE_LIVE` is the wanted go-live mechanism** (a constant in
   `wp-config.php`) rather than an admin checkbox.
 - **Confirm where blocked store URLs should land** — currently home. A "coming
