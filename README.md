@@ -1,19 +1,29 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Three jobs:
+WooCommerce-side logic plugin for qhta.com.au. Four jobs:
 
 - **gating pages behind a WooCommerce purchase**, so paid content (conference
   recordings and the like) is locked without a membership plugin;
 - a **"My Content" tab** in My Account listing what each customer can reach;
 - **store preview mode** — the store stays hidden from the public until it is
-  switched live, while remaining fully testable, including logged out.
+  switched live, while remaining fully testable, including logged out;
+- **shopfront personalisation** — a member-pricing banner on the shop, and a
+  header cart button with a live item count.
 
 ## Scope
 
 **Belongs here:** WooCommerce behaviour — purchase gates, future Woo tweaks.
 
-**Does not belong here:** presentation (that's `qhta-theme-extras`), conference
-domain logic (that's the conference program plugin).
+**Does not belong here:** theme presentation (that's `qhta-theme-extras`),
+conference domain logic (that's the conference program plugin).
+
+**One carve-out:** the shopfront components this plugin *creates* — the member
+banner and the cart button — ship their own CSS here, in
+`assets/qhta-commerce.css`. They only exist while this plugin is active, so
+keeping markup and styling in one repo means one deploy per change rather than
+two, and no class-name contract to keep in step across repos. It stays scoped to
+those components. Styling anything the **theme** owns still belongs in
+`qhta-theme-extras`.
 
 **Test:** "Is it WooCommerce behaviour that is *not* presentation and *not*
 conference-specific?" Yes -> here.
@@ -21,6 +31,9 @@ conference-specific?" Yes -> here.
 Deliberately out of scope: member pricing and discounts (the PMPro WooCommerce
 Integration add-on owns that, per-product), account creation / checkout / emails
 (native WooCommerce settings), and the look of the gated pages themselves.
+
+The member banner is not an exception to that first one — it *advertises* member
+pricing, it does not apply it. Nothing here touches a price.
 
 There is **no settings screen**. The per-page field *is* the configuration.
 
@@ -229,6 +242,10 @@ judgement, and matching URLs in code would break the moment a page moved.
 Unflagged items are never touched. Hiding an item hides its submenu items too,
 so a flagged parent does not leave its children dangling at top level.
 
+A menu item flagged as the **cart button** (the second checkbox — see Shop
+personalisation) is hidden with the store automatically, so it does not need
+this box ticked as well.
+
 ### Caching — this is the part that bites
 
 Full-page caching serves a stored copy without consulting the cookie, so **the
@@ -254,20 +271,178 @@ what keeps behaviour correct after launch.
   and nothing is hidden. There is no store to hide in that state, and the admin
   notice already flags it.
 
+## Shop personalisation
+
+Two pieces of shopfront UI: a banner on the shop, and a cart button for the
+header. Markup **and** styling both live here — see the carve-out under Scope.
+
+| Class | What it is |
+| --- | --- |
+| `.qhta-member-banner` | The banner wrapper on the shop |
+| `.qhta-cart-button` | The cart link (outer element) |
+| `.qhta-cart-button--empty` | Added to the above when the cart is empty |
+| `.qhta-cart-icon` | The icon glyph |
+| `.qhta-cart-count` | The number |
+
+### Styling
+
+`assets/qhta-commerce.css`, enqueued on the front end while the store is
+visible — nothing loads before go-live, since neither component renders then.
+
+It is scoped to the classes above: no element selectors, nothing that can reach
+the theme, and the brand tokens (navy `#1d3461`, teal `#3ecfb2`, accent
+`#8a1538`) are declared on the components rather than on `:root`, so a plugin
+never defines site-wide custom properties.
+
+- The **banner** is a tinted band, not a solid panel — a teal wash at 8%, a
+  hairline of the same teal, navy text, accent links. It is a nudge above the
+  product grid, so it is weighted like a note rather than an announcement.
+- The **cart button** is white, to carry on the navy header. `--qhta-cart-ink`
+  on `.qhta-cart-button` is the one line to change if it ever has to sit on a
+  light header — set it to `var(--qhta-navy)` and the icon follows, since the
+  glyph takes `currentColor`. Hover goes teal. The count badge is accent, which
+  is meant to stand out.
+- **An empty cart shows no number** — just the icon. A badge reading "0" says
+  nothing the empty icon doesn't.
+- The **icon** is Feather's `shopping-cart` (MIT), inlined as a data URI and
+  applied with `mask-image` so it picks up the text colour. No icon font, no
+  extra request, no library to keep in step.
+
+The stylesheet is versioned on `QHTA_COMMERCE_VERSION`. **Editing the CSS
+without bumping the plugin version means the change reaches nobody who has
+visited the site before** — the old file stays in browser and CDN caches.
+
+### Member-pricing banner
+
+Sits above the product grid on the Shop page and product category/tag archives,
+telling non-members that logging in or joining gets them a better price:
+
+> Members save on every package — **log in** for member pricing, or **join
+> QHTA**.
+
+Hooked to `woocommerce_before_shop_loop` at priority 5: above the result count
+and the ordering dropdown, below the page title.
+
+**Who does not see it:**
+
+- **Members.** They already have the discount, so the nudge is noise at best and
+  reads as a billing error at worst.
+- **Everyone, if PMPro is inactive.** With no membership plugin there is no
+  member pricing to advertise and the join link points at a page that no longer
+  does anything — and members cannot be told from non-members, so the one group
+  it must never reach would get it. It advertises nothing instead. (The brief's
+  snippet rendered it in this case; acceptance criterion 8 says fail safe. This
+  follows the criterion.)
+
+The **log in** link reuses the plugin's own login URL, so it carries
+`redirect_to` back to the Shop page rather than stranding people on /login/. On
+a category archive that returns them to the main shop rather than the exact term
+— never a wrong page, just a general one.
+
+The **join** link resolves to PMPro's own Levels page when it can be found —
+same reasoning as the Shop lookup, no slug hardcoded, survives a rename — and
+falls back to the brief's `/membership-account/`. See Open items: in a stock
+PMPro install that fallback is the *account* page, not where someone chooses
+what to join.
+
+Both the destination and the wording are filterable — see Extension points.
+
+**Store preview:** no guard, and none missing. The hook only fires on the shop
+and product archives, which are already redirected away while the store is
+hidden.
+
+### Cart button
+
+A cart icon with a live item count, linking to the Cart page. **Two ways to
+place it** — one for a nav menu, one for anywhere else.
+
+#### In a nav menu (the checkbox)
+
+Appearance -> Menus -> add a **Custom Link**, URL `#`, any label -> expand it ->
+tick **"Cart button — replace this item with the cart icon and live count"**.
+
+The item's URL and label are then ignored; the label only ever shows in the
+admin screen, so name it whatever makes the menu readable. The whole item is
+replaced by the button.
+
+**Pasting `[qhta_cart_button]` into a menu item's label does not work** — it
+shows up on the site as literal text. Menu labels run through `the_title`, which
+has no `do_shortcode` on it. Turning shortcodes on for that filter would enable
+them for every menu item on the site and make any label containing square
+brackets a hazard, which is a much broader change than this needs, so the
+checkbox is the supported route instead.
+
+Replacing the *whole item* is the other half of it: by the time a label is
+filtered the walker has already opened an `<a>`, and the cart button is an `<a>`
+— nesting them is invalid HTML that browsers silently tear apart, leaving the
+button outside the link it belonged to. The checkbox hands over the entire item,
+anchor included, so there is exactly one.
+
+A cart-button item is **removed from the menu entirely** — not left as an empty
+`<li>` — while the store is hidden or WooCommerce is inactive. You do not need
+to tick "Store link" as well, though ticking both is harmless.
+
+#### Anywhere else (the shortcode)
+
+```
+[qhta_cart_button]
+```
+
+For an Astra header HTML widget, an Elementor HTML element, or any slot that
+runs shortcodes. It self-guards on `qhta_commerce_store_visible()` and renders
+nothing while the store is hidden — it has to, since the menu-item checkboxes
+can't reach a header widget.
+
+**Confirm where in the header it should sit**, whichever route you use.
+
+#### How the live count works
+
+The count updates on add-to-cart **without a page reload**, via WooCommerce's
+cart fragments. Two things make that work, and both are load-bearing:
+
+- `wc-cart-fragments` is enqueued site-wide while the store is visible. Woo only
+  enqueues it on its own pages, and a header button is on all of them. It cannot
+  be conditional on the button being present — header and menu content is
+  composed long after scripts are enqueued.
+- The fragment is keyed on the selector `a.qhta-cart-button`, which must match
+  the button's outer element **exactly**. Change the tag or the class and the
+  count silently stops updating while everything still renders.
+
+**Empty cart:** the icon alone — the count is hidden by CSS via the
+`.qhta-cart-button--empty` class. To hide the whole button when empty as well,
+uncomment the rule at the bottom of `assets/qhta-commerce.css`.
+
+Note *hidden*, not *not rendered*, in both cases. The fragment replaces the node
+matching `a.qhta-cart-button`; once that anchor is gone from the DOM there is
+nothing for the next add-to-cart to update, and the count stays invisible until
+a reload. Hiding keeps the node. Do not "fix" this by making the plugin return
+empty markup.
+
+**Caching:** the cached HTML carries whatever count it was cached with;
+fragments overwrite it per browser. That is another reason the cache exclusions
+below are not optional.
+
+**Accessibility:** the link carries an `aria-label` reading "View cart, N
+items"; the icon and the number are `aria-hidden` so a screen reader gets the
+sentence rather than the sentence and then a bare digit.
+
 ## Structure
 
 ```
 qhta-commerce/
-  qhta-commerce.php     Bootstrap: header, per-page field, gate. Keep thin.
-  scripts/build-zip.sh  Packages the deploy zip. Not shipped.
+  qhta-commerce.php           Bootstrap: header, per-page field, gate. Keep thin.
+  assets/qhta-commerce.css    Banner and cart button. Shipped.
+  scripts/build-zip.sh        Packages the deploy zip. Not shipped.
   README.md
   CHANGELOG.md
 ```
 
-Single file is right for v1. If more Woo behaviour lands, split into `includes/`
-required from the bootstrap rather than letting the bootstrap sprawl.
+One PHP file was right for v1 and is getting long. If more Woo behaviour lands,
+split into `includes/` required from the bootstrap rather than letting the
+bootstrap sprawl further.
 
-No dependencies, no build step, no Composer. Plain PHP, drop-in plugin.
+No dependencies, no build step, no Composer. Plain PHP and plain CSS, drop-in
+plugin.
 
 ## Install
 
@@ -373,6 +548,18 @@ add_filter( 'qhta_commerce_store_hidden_redirect', function () {
 add_filter( 'qhta_commerce_is_entitled', function ( $entitled, $product_id, $page_id ) {
 	return $entitled || current_user_can( 'edit_post', $page_id );
 }, 10, 3 );
+
+// Where the member banner's "join QHTA" link goes — defaults to PMPro's Levels
+// page, falling back to /membership-account/.
+add_filter( 'qhta_commerce_join_url', function () {
+	return home_url( '/join/' );
+} );
+
+// The member banner's wording, links included. Passed through wp_kses_post() on
+// output, so links and emphasis survive and script does not.
+add_filter( 'qhta_commerce_member_banner_text', function () {
+	return 'Members pay less on every package. <a href="/login/">Log in</a>.';
+} );
 ```
 
 By default **nobody** bypasses the gate, administrators included. That keeps the
@@ -429,6 +616,15 @@ you through, whatever the reason.
   requesting the URL.
 - The meta key is underscore-prefixed (`_qhta_gate_product_id`) so it stays out
   of the generic Custom Fields UI. The sidebar panel is the intended way in.
+- **Member pricing itself is not this plugin's**, and the banner does not make it
+  happen. The discount is the PMPro WooCommerce Integration add-on's job,
+  configured per product. The banner only says it exists — so if that add-on is
+  not set up on a product, the banner is advertising a discount that will not
+  appear at checkout. Worth checking together before launch.
+- `wc-cart-fragments` runs site-wide while the store is visible, not just on Woo
+  pages, because the cart button is in the header on every page. It is Woo's own
+  script and small, but it does mean one more request on pages that have nothing
+  to do with the store.
 
 ## Open items
 
@@ -459,3 +655,18 @@ you through, whatever the reason.
   hidden state. Nothing is flagged by default, so until that is done the links
   stay visible even though the pages behind them redirect.
 - Add **Cart, Checkout and Shop** to the Hostinger cache exclusions.
+- **Confirm the "join QHTA" destination.** It resolves to PMPro's Levels page
+  when that is configured, falling back to the brief's `/membership-account/` —
+  which in a stock PMPro install is the *account* page a signed-in member lands
+  on, not where a prospect chooses a level. Set the Levels page in PMPro, or
+  point `qhta_commerce_join_url` wherever it should go.
+- **Confirm where in the header the cart button sits**, and place it — either a
+  menu item with the "Cart button" box ticked, or `[qhta_cart_button]` in a
+  header widget. Nothing places it automatically.
+- **Check the banner and button against the live header** once placed. The
+  styling is a first pass: the banner commits to brand navy and teal, and the
+  button deliberately inherits the header's own colour rather than asserting
+  one. Say if either wants to look different.
+- **Assign a real product category.** Both products currently show
+  "Uncategorised" on the shop. Products -> Categories, e.g. "Study Packages".
+  Manual admin task, no code involved.

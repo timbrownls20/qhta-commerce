@@ -1,0 +1,153 @@
+/*
+ * QHTA Commerce — shopfront UI.
+ *
+ * Scoped entirely to this plugin's own components. No element selectors, no
+ * utility classes, nothing that can reach the theme: every rule below starts at
+ * .qhta-member-banner or .qhta-cart-button, so this file cannot collide with
+ * Astra or with qhta-theme-extras.
+ *
+ * Brand tokens are declared on the components rather than on :root for the same
+ * reason — a plugin has no business defining site-wide custom properties, and a
+ * theme that already defines --qhta-navy stays untouched.
+ */
+
+.qhta-member-banner,
+.qhta-cart-button {
+	--qhta-navy: #1d3461;
+	--qhta-teal: #3ecfb2;
+	--qhta-accent: #8a1538;
+}
+
+/* -------------------------------------------------------------------------
+ * Member-pricing banner
+ * ---------------------------------------------------------------------- */
+
+/*
+ * A tinted band rather than a solid navy block. It is a nudge, not an
+ * announcement — a full-strength brand panel above the grid competed with the
+ * products for attention and read as heavier than the message deserves.
+ *
+ * So: a teal wash at 8%, a hairline of the same teal, and navy text. The brand
+ * colours are all still here, just at the weight of a note.
+ */
+.qhta-member-banner {
+	margin: 0 0 2em;
+	padding: 0.8em 1.25em;
+	border: 1px solid rgba(62, 207, 178, 0.5);
+	border-radius: 6px;
+	background-color: rgba(62, 207, 178, 0.08);
+	color: var(--qhta-navy);
+	font-size: 0.95em;
+	line-height: 1.6;
+	text-align: center;
+}
+
+.qhta-member-banner a {
+	color: var(--qhta-accent);
+	font-weight: 600;
+	/* Underlined rather than colour-only: colour alone is not a link cue for
+	   anyone who cannot separate accent from navy at body size. */
+	text-decoration: underline;
+	text-underline-offset: 0.15em;
+	text-decoration-thickness: 1px;
+}
+
+.qhta-member-banner a:hover,
+.qhta-member-banner a:focus {
+	color: var(--qhta-navy);
+}
+
+/* -------------------------------------------------------------------------
+ * Cart button
+ *
+ * Lives in the site header, which on this site is brand navy — so the button
+ * commits to white rather than inheriting the header's muted link grey, which
+ * left it barely visible.
+ *
+ * --qhta-cart-ink is the one line to change if the button ever has to sit on a
+ * light header: set it to var(--qhta-navy). The icon follows it automatically
+ * via currentColor, so the hover state comes along too.
+ * ---------------------------------------------------------------------- */
+
+.qhta-cart-button {
+	--qhta-cart-ink: #fff;
+
+	display: inline-flex;
+	align-items: center;
+	gap: 0.45em;
+	color: var(--qhta-cart-ink);
+	line-height: 1;
+	text-decoration: none;
+	vertical-align: middle;
+}
+
+.qhta-cart-button:hover,
+.qhta-cart-button:focus {
+	color: var(--qhta-teal);
+}
+
+/*
+ * The glyph, as a mask rather than a background image, so it inherits the
+ * header's text colour instead of being baked in at one colour. Feather's
+ * "shopping-cart" (MIT), inlined as a data URI — no font, no HTTP request, no
+ * icon-library dependency to keep in step.
+ */
+.qhta-cart-icon {
+	display: inline-block;
+	width: 1.5em;
+	height: 1.5em;
+	background-color: currentColor;
+	-webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='21' r='1'/%3E%3Ccircle cx='20' cy='21' r='1'/%3E%3Cpath d='M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6'/%3E%3C/svg%3E");
+	mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='9' cy='21' r='1'/%3E%3Ccircle cx='20' cy='21' r='1'/%3E%3Cpath d='M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6'/%3E%3C/svg%3E");
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+	-webkit-mask-position: center;
+	mask-position: center;
+	-webkit-mask-size: contain;
+	mask-size: contain;
+}
+
+.qhta-cart-count {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 1.7em;
+	height: 1.7em;
+	padding: 0 0.45em;
+	border-radius: 999px;
+	background-color: var(--qhta-accent);
+	color: #fff;
+	font-size: 0.72em;
+	font-weight: 700;
+	line-height: 1;
+}
+
+/*
+ * Empty cart: no number at all, just the icon. A badge reading "0" is noise —
+ * it says nothing the empty icon does not.
+ *
+ * Hidden rather than not rendered, and the distinction matters: WooCommerce's
+ * fragments replace the node matching `a.qhta-cart-button`, so that anchor has
+ * to stay in the DOM or the count never reappears when the first item is added.
+ * The anchor is untouched here; only the number inside it goes.
+ */
+.qhta-cart-button--empty .qhta-cart-count {
+	display: none;
+}
+
+/*
+ * To hide the whole button while the cart is empty, uncomment this. Same rule
+ * as above applies — hide it, never stop rendering it, or fragments have
+ * nothing to replace.
+ *
+ * .qhta-cart-button--empty {
+ *     display: none;
+ * }
+ */
+
+/* A menu item replaced by the cart button carries the theme's own link styling
+   in some headers; this keeps the underline off in those. */
+.menu-item .qhta-cart-button,
+.menu-item .qhta-cart-button:hover {
+	text-decoration: none;
+}

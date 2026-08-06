@@ -1,22 +1,29 @@
 <?php
 /**
  * Plugin Name:       QHTA Commerce
- * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, and store preview mode. No presentation, no conference domain logic.
- * Version:           1.2.1
+ * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, and shopfront personalisation (member-pricing banner, header cart button, styling for both). No theme presentation, no conference domain logic.
+ * Version:           1.4.1
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
  * Requires PHP:      7.4
  *
- * Scope rule: WooCommerce-side behaviour only. Presentation lives in qhta-theme-extras;
- * conference domain logic lives in the conference program plugin.
+ * Scope rule: WooCommerce-side behaviour only. Theme presentation lives in
+ * qhta-theme-extras; conference domain logic lives in the conference program plugin.
+ *
+ * One carve-out, decided deliberately: the shopfront components this plugin
+ * *creates* — the member banner and the cart button — ship their own CSS here,
+ * in assets/qhta-commerce.css. They exist only while this plugin is active, so
+ * keeping their markup and their styling in one repo means one deploy per
+ * change instead of two. It stays scoped to those components; styling anything
+ * the theme owns still belongs in qhta-theme-extras.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.2.1' );
+define( 'QHTA_COMMERCE_VERSION', '1.4.1' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -784,6 +791,17 @@ const QHTA_STORE_PREVIEW_PARAM = 'qhta-store-preview';
 const QHTA_STORE_LINK_META = '_qhta_store_link';
 
 /**
+ * Menu-item meta turning a link into the cart button.
+ *
+ * Its own flag rather than a reuse of the one above, because they answer
+ * different questions: "hide this while the store is hidden" and "render this as
+ * the cart button". A cart-button item is hidden with the store as a
+ * consequence — see qhta_commerce_filter_menu_items() — so it does not need
+ * both boxes ticked, but ticking both is harmless.
+ */
+const QHTA_CART_BUTTON_META = '_qhta_cart_button';
+
+/**
  * Is the store visible to whoever is asking?
  *
  * Live or preview cookie — capabilities do not come into it. Filterable, so
@@ -946,19 +964,33 @@ add_action( 'init', 'qhta_commerce_handle_preview_request' );
  * @param WP_Post $item    Menu item.
  */
 function qhta_commerce_menu_item_field( $item_id, $item ) {
-	$field_id = 'qhta-store-link-' . (int) $item_id;
-	$flagged  = '1' === get_post_meta( $item_id, QHTA_STORE_LINK_META, true );
+	$store_id   = 'qhta-store-link-' . (int) $item_id;
+	$cart_id    = 'qhta-cart-button-' . (int) $item_id;
+	$is_store   = '1' === get_post_meta( $item_id, QHTA_STORE_LINK_META, true );
+	$is_cart    = '1' === get_post_meta( $item_id, QHTA_CART_BUTTON_META, true );
 	?>
 	<p class="description description-wide">
-		<label for="<?php echo esc_attr( $field_id ); ?>">
+		<label for="<?php echo esc_attr( $store_id ); ?>">
 			<input
 				type="checkbox"
-				id="<?php echo esc_attr( $field_id ); ?>"
+				id="<?php echo esc_attr( $store_id ); ?>"
 				name="qhta_store_link[<?php echo esc_attr( $item_id ); ?>]"
 				value="1"
-				<?php checked( $flagged ); ?>
+				<?php checked( $is_store ); ?>
 			>
 			<?php esc_html_e( 'Store link (hidden until the store is live or in preview)', 'qhta-commerce' ); ?>
+		</label>
+	</p>
+	<p class="description description-wide">
+		<label for="<?php echo esc_attr( $cart_id ); ?>">
+			<input
+				type="checkbox"
+				id="<?php echo esc_attr( $cart_id ); ?>"
+				name="qhta_cart_button[<?php echo esc_attr( $item_id ); ?>]"
+				value="1"
+				<?php checked( $is_cart ); ?>
+			>
+			<?php esc_html_e( 'Cart button — replace this item with the cart icon and live count', 'qhta-commerce' ); ?>
 		</label>
 	</p>
 	<?php
@@ -966,7 +998,7 @@ function qhta_commerce_menu_item_field( $item_id, $item ) {
 add_action( 'wp_nav_menu_item_custom_fields', 'qhta_commerce_menu_item_field', 10, 2 );
 
 /**
- * Save the checkbox.
+ * Save the checkboxes.
  *
  * @param int $menu_id    Menu being saved.
  * @param int $item_db_id Menu item being saved.
@@ -994,11 +1026,23 @@ function qhta_commerce_save_menu_item_field( $menu_id, $item_db_id ) {
 	} else {
 		delete_post_meta( $item_db_id, QHTA_STORE_LINK_META );
 	}
+
+	if ( isset( $_POST['qhta_cart_button'][ $item_db_id ] ) ) {
+		update_post_meta( $item_db_id, QHTA_CART_BUTTON_META, '1' );
+	} else {
+		delete_post_meta( $item_db_id, QHTA_CART_BUTTON_META );
+	}
 }
 add_action( 'wp_update_nav_menu_item', 'qhta_commerce_save_menu_item_field', 10, 2 );
 
 /**
- * Drop flagged links from rendered menus while the store is hidden.
+ * Drop flagged links from rendered menus when they should not be there.
+ *
+ * Two reasons an item goes: it is a store link and the store is hidden, or it
+ * is the cart button and there is nothing to render one from — a hidden store,
+ * or no WooCommerce at all. The cart button is dropped here rather than left to
+ * render as nothing so the menu is not left with an empty <li> carrying the
+ * theme's item padding and separators.
  *
  * Descendants of a removed item go too. Hiding a parent but keeping its
  * children would leave submenu entries hanging off nothing, which most walkers
@@ -1009,17 +1053,21 @@ add_action( 'wp_update_nav_menu_item', 'qhta_commerce_save_menu_item_field', 10,
  * @return array
  */
 function qhta_commerce_filter_menu_items( $items ) {
-	if ( qhta_commerce_store_visible() ) {
+	$hide_store = ! qhta_commerce_store_visible();
+	$hide_cart  = $hide_store || ! qhta_commerce_woo_active();
+
+	if ( ! $hide_store && ! $hide_cart ) {
 		return $items;
 	}
 
 	$removed = array();
 
 	foreach ( $items as $key => $item ) {
-		$flagged = '1' === get_post_meta( $item->ID, QHTA_STORE_LINK_META, true );
-		$orphan  = isset( $removed[ (int) $item->menu_item_parent ] );
+		$store_link = $hide_store && '1' === get_post_meta( $item->ID, QHTA_STORE_LINK_META, true );
+		$cart       = $hide_cart && '1' === get_post_meta( $item->ID, QHTA_CART_BUTTON_META, true );
+		$orphan     = isset( $removed[ (int) $item->menu_item_parent ] );
 
-		if ( $flagged || $orphan ) {
+		if ( $store_link || $cart || $orphan ) {
 			$removed[ (int) $item->ID ] = true;
 			unset( $items[ $key ] );
 		}
@@ -1122,7 +1170,360 @@ add_action( 'template_redirect', 'qhta_commerce_block_store_pages', 5 );
 
 
 /* -------------------------------------------------------------------------
- * 5. Admin notices
+ * 5. Shop personalisation — member banner and cart button
+ *
+ * Two pieces of shopfront UI: a banner telling non-members that logging in or
+ * joining gets them a better price, and a header cart button with a live item
+ * count.
+ *
+ * Styled here too, in assets/qhta-commerce.css, rather than in
+ * qhta-theme-extras — see the scope note at the top of this file. These
+ * components are commerce UI that only exists while this plugin is active, and
+ * splitting the markup from the CSS that makes it a button meant a two-repo
+ * deploy to change an icon and a class-name contract to keep in step.
+ *
+ * The stylesheet is scoped to .qhta-member-banner and .qhta-cart-button, with
+ * no element selectors and no site-wide custom properties, so it still cannot
+ * reach the theme. Colours stay in the CSS; nothing in this file emits one.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Is PMPro present and far enough booted to ask about membership?
+ *
+ * The membership counterpart to qhta_commerce_woo_active(), and read the same
+ * way: no PMPro, no membership questions to answer.
+ *
+ * @return bool
+ */
+function qhta_commerce_pmpro_active() {
+	return function_exists( 'pmpro_hasMembershipLevel' );
+}
+
+/**
+ * Does the current visitor hold a membership level?
+ *
+ * False without PMPro — but callers must not read that as "so they are a
+ * non-member and can be sold a membership". Nobody is a member when there is no
+ * membership system, and nobody can be sold one either; see the banner below.
+ *
+ * @return bool
+ */
+function qhta_commerce_is_member() {
+	if ( ! qhta_commerce_pmpro_active() ) {
+		return false;
+	}
+
+	return (bool) pmpro_hasMembershipLevel();
+}
+
+/**
+ * Where "join QHTA" points.
+ *
+ * PMPro's own Levels page when it can be found, the same way
+ * qhta_commerce_browse_url() asks WooCommerce for the Shop page rather than
+ * hardcoding a slug — it keeps working if the page is renamed or moved.
+ *
+ * The fallback is the brief's /membership-account/. **Confirm which is wanted**:
+ * in a stock PMPro install that path is the *account* page a signed-in member
+ * lands on, and the Levels page is where someone chooses what to buy — so the
+ * fallback may be sending a prospective member to the wrong end of the funnel.
+ * Filterable either way:
+ *
+ *   add_filter( 'qhta_commerce_join_url', function () {
+ *       return home_url( '/join/' );
+ *   } );
+ *
+ * @return string
+ */
+function qhta_commerce_join_url() {
+	$url = function_exists( 'pmpro_url' ) ? pmpro_url( 'levels' ) : '';
+
+	if ( ! $url ) {
+		$url = home_url( '/membership-account/' );
+	}
+
+	return apply_filters( 'qhta_commerce_join_url', $url );
+}
+
+/**
+ * The banner's text, links already built in.
+ *
+ * Assembled with placeholders rather than concatenated around the anchors so
+ * the sentence stays translatable as a sentence — a translator can move "log
+ * in" and "join QHTA" to wherever the grammar puts them.
+ *
+ * Filterable for wording changes without a deploy. The result is passed through
+ * wp_kses_post() on output, so a filter can return links and emphasis but not
+ * script:
+ *
+ *   add_filter( 'qhta_commerce_member_banner_text', function () {
+ *       return 'Members pay less. <a href="/login/">Log in</a>.';
+ *   } );
+ *
+ * @return string HTML.
+ */
+function qhta_commerce_member_banner_text() {
+	// Back to the Shop page after signing in, via the plugin's one answer to
+	// "where do people log in" rather than a second hardcoded /login/. On a
+	// category archive that returns them to the main shop rather than the exact
+	// term they were browsing — accepted, since it is never a wrong page.
+	$return_to = qhta_commerce_woo_active() ? wc_get_page_permalink( 'shop' ) : '';
+
+	if ( ! $return_to ) {
+		$return_to = home_url( '/' );
+	}
+
+	$text = sprintf(
+		/* translators: 1: opening link tag to the login page. 2: closing link tag. 3: opening link tag to the join page. 4: closing link tag. */
+		__( 'Members save on every package — %1$slog in%2$s for member pricing, or %3$sjoin QHTA%4$s.', 'qhta-commerce' ),
+		'<a href="' . esc_url( qhta_commerce_login_url( $return_to ) ) . '">',
+		'</a>',
+		'<a href="' . esc_url( qhta_commerce_join_url() ) . '">',
+		'</a>'
+	);
+
+	return (string) apply_filters( 'qhta_commerce_member_banner_text', $text );
+}
+
+/**
+ * Print the member-pricing banner above the product grid.
+ *
+ * Priority 5 on woocommerce_before_shop_loop: above the result count (20) and
+ * the ordering dropdown (30), below the page title, which is outside this hook.
+ *
+ * Two ways to see nothing, and they are different things:
+ *
+ * - The visitor is already a member. They have the discount; a nudge to go and
+ *   get it is noise at best and looks like a billing error at worst.
+ * - PMPro is inactive. The brief's snippet showed the banner in this case,
+ *   which acceptance criterion 8 then contradicts — this follows the criterion,
+ *   and it is also the only safe reading: with no membership plugin there is no
+ *   member pricing to advertise, the join link points at a page that no longer
+ *   does anything, and members cannot be told from non-members, so the one
+ *   group the banner must never reach would get it. Advertise nothing.
+ *
+ * No store-preview guard, and none is missing: this hook only fires on the shop
+ * and product archives, which qhta_commerce_block_store_pages() has already
+ * redirected away from while the store is hidden. A guard here would be a check
+ * that can never be false.
+ */
+function qhta_commerce_member_banner() {
+	if ( ! qhta_commerce_pmpro_active() || qhta_commerce_is_member() ) {
+		return;
+	}
+
+	printf(
+		'<div class="qhta-member-banner">%s</div>',
+		wp_kses_post( qhta_commerce_member_banner_text() )
+	);
+}
+add_action( 'woocommerce_before_shop_loop', 'qhta_commerce_member_banner', 5 );
+
+/**
+ * Print the cart button.
+ *
+ * Shared by the shortcode and the cart fragment so the two cannot render
+ * differently — the fragment's whole job is to replace this markup with an
+ * identical node carrying a new number.
+ *
+ * WC()->cart is null on admin, REST and cron requests, where there is no
+ * session to have a cart in; that reads as empty rather than fatal.
+ *
+ * The anchor is always emitted, even at zero. Returning nothing when the cart
+ * is empty would be the obvious way to hide it and it breaks the feature: the
+ * fragment replaces the node matching 'a.qhta-cart-button', so once that node
+ * is gone there is nothing left for the next add-to-cart to update, and the
+ * count stays invisible until a page reload. The empty state is a class
+ * instead, and the stylesheet carries a commented-out rule that hides it if
+ * that is wanted — the node survives either way.
+ */
+function qhta_commerce_cart_button_html() {
+	$count = ( function_exists( 'WC' ) && WC()->cart ) ? WC()->cart->get_cart_contents_count() : 0;
+	$url   = function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : home_url( '/cart/' );
+
+	$classes = 'qhta-cart-button';
+
+	if ( ! $count ) {
+		$classes .= ' qhta-cart-button--empty';
+	}
+
+	printf(
+		'<a class="%1$s" href="%2$s" aria-label="%3$s"><span class="qhta-cart-icon" aria-hidden="true"></span><span class="qhta-cart-count" aria-hidden="true">%4$d</span></a>',
+		esc_attr( $classes ),
+		esc_url( $url ),
+		esc_attr(
+			sprintf(
+				/* translators: %d: number of items currently in the cart. */
+				_n( 'View cart, %d item', 'View cart, %d items', $count, 'qhta-commerce' ),
+				$count
+			)
+		),
+		(int) $count
+	);
+
+	// The count is aria-hidden because the label above already says it. Without
+	// that a screen reader announces the number twice, once as a sentence and
+	// once as a bare digit.
+}
+
+/**
+ * [qhta_cart_button] — the header cart button.
+ *
+ * A shortcode rather than a hooked-in header element because the header is the
+ * theme's, not this plugin's: Astra and Elementor both take a shortcode in a
+ * header slot, and that keeps the placement decision in the site builder where
+ * whoever is arranging the header can see it.
+ *
+ * Self-guarding on store visibility, unlike the banner. The per-menu-item
+ * "Store link" checkbox only reaches items in a nav menu, and this is dropped
+ * into a header widget — so nothing else would hide it, and a cart icon on a
+ * store nobody can buy from is exactly the leak store-preview mode exists to
+ * prevent.
+ *
+ * @return string
+ */
+function qhta_commerce_cart_button_shortcode() {
+	if ( ! qhta_commerce_store_visible() || ! qhta_commerce_woo_active() ) {
+		return '';
+	}
+
+	ob_start();
+	qhta_commerce_cart_button_html();
+
+	return ob_get_clean();
+}
+add_shortcode( 'qhta_cart_button', 'qhta_commerce_cart_button_shortcode' );
+
+/**
+ * Load WooCommerce's cart-fragments script so the count updates without a
+ * reload.
+ *
+ * Woo registers this on every front-end load but only enqueues it on its own
+ * pages — and the point of a header button is that it is on all of them.
+ *
+ * Site-wide while the store is visible, because there is no way to know at
+ * enqueue time whether the header will render the shortcode: header widget
+ * content is the theme's business and is composed long after wp_enqueue_scripts
+ * has run. Hidden store, no script — that is the only case that can be decided
+ * here.
+ *
+ * This is also what makes the count survive full-page caching. The cached HTML
+ * carries whatever number the page was cached with; fragments overwrite it per
+ * browser from the session, which is why the cache exclusions in the README
+ * matter to this feature as well as to preview mode.
+ */
+function qhta_commerce_cart_fragments_script() {
+	if ( ! qhta_commerce_store_visible() || ! qhta_commerce_woo_active() ) {
+		return;
+	}
+
+	wp_enqueue_script( 'wc-cart-fragments' );
+}
+add_action( 'wp_enqueue_scripts', 'qhta_commerce_cart_fragments_script' );
+
+/**
+ * Load the shopfront stylesheet.
+ *
+ * Not loaded while the store is hidden: the banner cannot render there and the
+ * cart button refuses to, so there is nothing for it to style.
+ *
+ * Versioned on QHTA_COMMERCE_VERSION, so the bump that ships a style change is
+ * also what busts the browser and CDN caches holding the old one. Editing the
+ * CSS without bumping the version means the change reaches nobody who has been
+ * to the site before.
+ */
+function qhta_commerce_styles() {
+	if ( ! qhta_commerce_store_visible() ) {
+		return;
+	}
+
+	wp_enqueue_style(
+		'qhta-commerce',
+		plugins_url( 'assets/qhta-commerce.css', __FILE__ ),
+		array(),
+		QHTA_COMMERCE_VERSION
+	);
+}
+add_action( 'wp_enqueue_scripts', 'qhta_commerce_styles' );
+
+/**
+ * Render a flagged menu item as the cart button.
+ *
+ * This is the answer to "can I just put the shortcode in a menu item's label?" —
+ * no. Nav menu labels run through the_title, which has no do_shortcode on it,
+ * so the shortcode would appear on the site as literal text. Adding
+ * do_shortcode to that filter would fix it for every menu item on the site,
+ * which is a much broader change than this needs and turns any label with
+ * square brackets into a hazard.
+ *
+ * Replacing the item's whole output, rather than substituting inside the label,
+ * is the other half of the reason. The walker has already opened an anchor by
+ * the time a label is filtered, and the cart button is an anchor — nesting one
+ * inside the other is invalid HTML that browsers silently tear apart, leaving
+ * the button outside the link it was supposed to be. This filter hands over the
+ * entire item, anchor included, so there is exactly one.
+ *
+ * Anything set on the menu item itself — URL, label, target — is discarded. Use
+ * a Custom Link with '#' and any label; the label is what the admin screen shows
+ * you, and nothing else.
+ *
+ * The guard is belt to qhta_commerce_filter_menu_items()' braces: that already
+ * removed these items when the store is hidden, but it only runs inside
+ * wp_nav_menu(), and a theme can render a menu another way. Failing to empty is
+ * right here — a hidden store must not leak a cart link.
+ *
+ * @param string  $item_output The menu item's markup.
+ * @param WP_Post $item        The menu item.
+ * @return string
+ */
+function qhta_commerce_cart_button_menu_item( $item_output, $item ) {
+	if ( '1' !== get_post_meta( $item->ID, QHTA_CART_BUTTON_META, true ) ) {
+		return $item_output;
+	}
+
+	if ( ! qhta_commerce_store_visible() || ! qhta_commerce_woo_active() ) {
+		return '';
+	}
+
+	ob_start();
+	qhta_commerce_cart_button_html();
+
+	return ob_get_clean();
+}
+add_filter( 'walker_nav_menu_start_el', 'qhta_commerce_cart_button_menu_item', 10, 2 );
+
+/**
+ * Refresh the button on AJAX add-to-cart.
+ *
+ * The array key is a jQuery selector for the node to replace, so it has to
+ * match the button's outer element exactly — 'a.qhta-cart-button'. Change the
+ * tag or the class in qhta_commerce_cart_button_html() and this string changes
+ * with it, or the count silently stops updating while everything still renders.
+ *
+ * The modifier class on the empty state is on a second class deliberately: a
+ * selector of 'a.qhta-cart-button' still matches a node carrying both, so the
+ * button that is currently empty is still findable when the first item lands.
+ *
+ * @param array $fragments Selector => markup.
+ * @return array
+ */
+function qhta_commerce_cart_button_fragment( $fragments ) {
+	if ( ! qhta_commerce_store_visible() ) {
+		return $fragments;
+	}
+
+	ob_start();
+	qhta_commerce_cart_button_html();
+
+	$fragments['a.qhta-cart-button'] = ob_get_clean();
+
+	return $fragments;
+}
+add_filter( 'woocommerce_add_to_cart_fragments', 'qhta_commerce_cart_button_fragment' );
+
+
+/* -------------------------------------------------------------------------
+ * 6. Admin notices
  *
  * Both states this plugin can be in that look fine from wp-admin and are not:
  * a gate that is not being enforced, and a store the public cannot see.

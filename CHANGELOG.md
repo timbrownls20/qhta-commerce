@@ -1,5 +1,163 @@
 # Changelog
 
+## 1.4.1 — 7 August 2026
+
+### Changed
+- **Cart button is white**, rather than inheriting the header's link colour. On
+  the navy header that inherited grey left it barely visible. Hover goes teal.
+
+  `--qhta-cart-ink` on `.qhta-cart-button` is the single line to change if the
+  button ever has to sit on a light header — set it to `var(--qhta-navy)` and
+  the icon follows, since the glyph takes `currentColor`. Icon also up from
+  1.35em to 1.5em.
+- **An empty cart shows no number**, just the icon. A badge reading "0" says
+  nothing the empty icon does not, so it went rather than being muted.
+
+  Done in CSS on the existing `.qhta-cart-button--empty` class, not by rendering
+  less markup. The anchor still has to be in the DOM: fragments replace the node
+  matching `a.qhta-cart-button`, so removing it means the count never reappears
+  when the first item is added. Only the number inside it is hidden.
+- **Member banner is a tinted band, not a solid navy panel.** Full-strength
+  brand above the product grid competed with the products and read heavier than
+  the message deserves — it is a nudge, not an announcement. Now a teal wash at
+  8%, a hairline of the same teal, navy text and accent links, on a softer
+  radius with more air below. Same brand colours, at the weight of a note.
+
+## 1.4.0 — 7 August 2026
+
+### Added
+- **"Cart button" checkbox on menu items**, so the cart button can go in a nav
+  menu. Appearance -> Menus -> add a Custom Link (URL `#`, any label) -> tick
+  the box. The item's URL and label are then ignored; the whole item is replaced
+  by the button.
+
+  This exists because **pasting `[qhta_cart_button]` into a menu item's label
+  does not work** — it renders on the site as literal text. Nav labels run
+  through `the_title`, which has no `do_shortcode` attached. Adding one would
+  turn shortcodes on for every menu item on the site and make any label
+  containing square brackets a hazard, which is far wider than this needs.
+
+  Replacing the whole item — via `walker_nav_menu_start_el` rather than a label
+  filter — is the other half. By the time a label is filtered the walker has
+  already opened an `<a>`, and the cart button is an `<a>`; nesting them is
+  invalid HTML that browsers silently tear apart, leaving the button outside the
+  link it belonged to.
+
+  Stored as `_qhta_cart_button`, its own flag rather than a reuse of
+  `_qhta_store_link` — they answer different questions. A cart-button item is
+  **removed from the menu entirely** (not left as an empty `<li>` collecting the
+  theme's padding) when the store is hidden or WooCommerce is inactive, so
+  "Store link" does not also need ticking.
+- **`assets/qhta-commerce.css`** — the banner and cart button are now styled
+  here rather than in `qhta-theme-extras`. Enqueued on the front end while the
+  store is visible; nothing loads before go-live, since neither component
+  renders then.
+
+  Scoped to `.qhta-member-banner` and `.qhta-cart-button`: no element selectors,
+  nothing that can reach the theme, and the brand tokens are declared on the
+  components rather than on `:root`, so the plugin never defines site-wide
+  custom properties.
+
+  The banner commits to brand colours (navy panel, teal rule and links). The
+  cart button does not — it takes `currentColor` from whatever header it sits
+  in, so it matches the surrounding nav; only the count badge asserts a colour,
+  in accent, which is the point of a badge. The icon is Feather's
+  `shopping-cart` (MIT), inlined as a data URI and applied with `mask-image` so
+  it picks up the text colour: no icon font, no extra request, no library to
+  keep in step.
+
+  Versioned on `QHTA_COMMERCE_VERSION`. **Editing the CSS without bumping the
+  plugin version means the change reaches nobody who has visited before** — the
+  old file sits in browser and CDN caches.
+
+### Changed
+- **Scope rule carved out.** "Presentation lives in `qhta-theme-extras`" now
+  reads "*theme* presentation lives in `qhta-theme-extras`", with the shopfront
+  components this plugin creates keeping their own CSS. They only exist while
+  this plugin is active, so markup and styling in one repo means one deploy per
+  change instead of two, and no cross-repo class-name contract to keep in step.
+  Styling anything the theme owns still belongs in theme-extras.
+
+## 1.3.0 — 7 August 2026
+
+### Added
+- **Member-pricing banner on the shop.** Above the product grid on the Shop page
+  and product category/tag archives (`woocommerce_before_shop_loop`, priority 5 —
+  above the result count and ordering dropdown, below the title), telling
+  non-members that logging in or joining gets them a better price.
+
+  Not shown to members, who already have the discount. Not shown to anyone when
+  PMPro is inactive: the brief's snippet rendered it in that case and acceptance
+  criterion 8 says fail safe, so this follows the criterion. It is also the only
+  safe reading — with no membership plugin there is no member pricing to
+  advertise, the join link points at a page that no longer does anything, and
+  members cannot be told from non-members, so the one group it must never reach
+  would get it.
+
+  The log-in link reuses `qhta_commerce_login_url()` rather than hardcoding
+  `/login/` a second time, so it carries `redirect_to` back to the Shop page
+  instead of stranding people. The join link resolves to PMPro's Levels page when
+  configured — same reasoning as the existing Shop-page lookup, no slug in code,
+  survives a rename — falling back to the brief's `/membership-account/`. **That
+  fallback wants confirming**: in a stock PMPro install it is the account page a
+  signed-in member lands on, not where a prospect picks a level.
+
+  No store-preview guard, and none is missing: the hook only fires on shop and
+  product archives, which are already redirected away while the store is hidden.
+- **`[qhta_cart_button]` shortcode** — cart icon plus live item count, linking to
+  the Cart page. A shortcode rather than a hooked-in header element because the
+  header belongs to the theme; drop it into an Astra header HTML widget or an
+  Elementor HTML element. **Confirm where in the header it should sit.**
+
+  The count updates on add-to-cart without a reload via
+  `woocommerce_add_to_cart_fragments`, keyed on `a.qhta-cart-button`. That
+  selector must match the button's outer element exactly — change the tag or the
+  class and the count silently stops updating while everything still renders, so
+  both live in one function that the shortcode and the fragment share.
+
+  `wc-cart-fragments` is enqueued site-wide while the store is visible. Woo only
+  enqueues it on its own pages and a header button is on all of them; it cannot
+  be made conditional on the shortcode being present, because header widget
+  content is composed long after `wp_enqueue_scripts` has run.
+
+  Self-guards on `qhta_commerce_store_visible()` and renders nothing while the
+  store is hidden. It has to: the per-menu-item "Store link" checkbox only
+  reaches nav menu items, and this lives in a header widget.
+- **`qhta_commerce_join_url` and `qhta_commerce_member_banner_text` filters.**
+  The banner text is passed through `wp_kses_post()` on output, so a filter can
+  return links and emphasis but not script.
+- **`qhta_commerce_pmpro_active()` and `qhta_commerce_is_member()`** — the
+  membership counterparts to `qhta_commerce_woo_active()`, so "is PMPro there"
+  and "is this a member" are asked in one place each.
+
+### Notes
+- **Empty cart shows `0` plus a `.qhta-cart-button--empty` class, rather than
+  rendering nothing.** The brief offered a `qhta_commerce_hide_empty_cart` filter
+  as optional; a filter that returned empty markup would break the feature.
+  Fragments replace the node matching `a.qhta-cart-button` — once that node is
+  gone there is nothing for the next add-to-cart to update, and the count stays
+  invisible until a page reload. Hiding when empty is one CSS rule against the
+  modifier class, which does the same job and keeps the node. (Superseded in
+  1.4.0, which ships that rule commented out in the plugin's own stylesheet.)
+- **Styling was `qhta-theme-extras`' at this version** — this shipped
+  `.qhta-member-banner`, `.qhta-cart-button`, `.qhta-cart-button--empty`,
+  `.qhta-cart-icon` and `.qhta-cart-count` with no colours at all. Moved into
+  the plugin in 1.4.0.
+- The cart button carries an `aria-label` of "View cart, N items"; the icon and
+  the number are `aria-hidden` so a screen reader gets the sentence rather than
+  the sentence followed by a bare digit.
+- **The banner advertises member pricing; it does not apply it.** The discount is
+  the PMPro WooCommerce Integration add-on's, configured per product. If that is
+  not set up on a product, the banner promises a discount that will not appear at
+  checkout — worth checking together before launch.
+- Closures were used throughout the brief's snippets; these are named
+  `qhta_commerce_*` functions with the `add_action`/`add_filter` alongside, per
+  the house convention in the rest of the file. Behaviour is unchanged, but every
+  hook stays removable.
+- Not code: both products still show **"Uncategorised"** on the shop. Assign a
+  real product category (e.g. "Study Packages") in Products -> Categories before
+  launch. Noted in the README's open items.
+
 ## 1.2.1 — 7 August 2026
 
 ### Changed
