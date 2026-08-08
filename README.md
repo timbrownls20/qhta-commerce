@@ -1,6 +1,6 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Four jobs:
+WooCommerce-side logic plugin for qhta.com.au. Five jobs:
 
 - **gating pages behind a WooCommerce purchase**, so paid content (conference
   recordings and the like) is locked without a membership plugin;
@@ -8,7 +8,9 @@ WooCommerce-side logic plugin for qhta.com.au. Four jobs:
 - **store preview mode** — the store stays hidden from the public until it is
   switched live, while remaining fully testable, including logged out;
 - **shopfront personalisation** — a member-pricing banner on the shop, and a
-  header cart button with a live item count.
+  header cart button with a live item count;
+- **checkout tweaks** — phone gone, order notes gone, password strength down to
+  medium, and the account username field explained.
 
 ## Scope
 
@@ -28,9 +30,16 @@ those components. Styling anything the **theme** owns still belongs in
 **Test:** "Is it WooCommerce behaviour that is *not* presentation and *not*
 conference-specific?" Yes -> here.
 
+**Checkout split:** there are two checkouts on this site, and a checkout tweak is
+homed by *which one it acts on*, not by what it does. WooCommerce store checkout
+(`woocommerce_checkout_fields`, `order_comments`, Woo's password strength) ->
+here. PMPro membership checkout (`pmpro_is_checkout()`, `.pmpro_form`) ->
+`qhta-membership`. The same-looking change to the same-looking field lands in
+different plugins depending on which form it is.
+
 Deliberately out of scope: member pricing and discounts (the PMPro WooCommerce
-Integration add-on owns that, per-product), account creation / checkout / emails
-(native WooCommerce settings), and the look of the gated pages themselves.
+Integration add-on owns that, per-product), account creation and emails (native
+WooCommerce settings), and the look of the gated pages themselves.
 
 The member banner is not an exception to that first one — it *advertises* member
 pricing, it does not apply it. Nothing here touches a price.
@@ -426,6 +435,155 @@ below are not optional.
 items"; the icon and the number are `aria-hidden` so a screen reader gets the
 sentence rather than the sentence and then a bare digit.
 
+## Checkout tweaks
+
+Four adjustments to the **WooCommerce store checkout and account**. (Not the
+PMPro membership checkout — that is `qhta-membership`'s; see the checkout split
+under Scope.)
+
+| # | Tweak | Applies to |
+|---|-------|-----------|
+| 1 | **Phone removed** — from the form and from what Stripe asks for | form: classic only; Stripe: either |
+| 2 | **Order notes removed**, "Additional information" heading included | classic checkout only |
+| 3 | **Password strength: medium**, down from strong | everywhere Woo's strength meter runs |
+| 4 | **Account username help text** | classic checkout only |
+
+Tweak 4's wording:
+
+> Choose a username — you'll use it (or your email) to log in and access your
+> recordings anytime.
+
+### The phone field — two levers, one switch
+
+Phone is `hidden` by default: gone from the checkout, and **no phone number
+collected at all**, so orders and order emails carry none.
+
+It takes two levers to get there, and having only one is what broke checkout in
+1.5.1. Removing the field from the form left the **Stripe** gateway still asking
+Stripe to collect a number, and buyers hit a dead end at the payment step:
+
+> A phone number is required to confirm this Checkout Session. Provide a phone
+> number using `updatePhoneNumber()` or pass `phoneNumber` to `confirm()`.
+
+A Stripe.js error, not a WooCommerce one, and strictly worse than the asterisk it
+replaced — a buyer who can neither pay nor see why. The gateway builds its
+Checkout Session from an **option**, never from the filtered field array
+(`class-wc-stripe-checkout-sessions-ajax-handler.php`):
+
+```php
+if ( 'required' === get_option( 'woocommerce_checkout_phone_field', 'required' ) ) {
+	$request['phone_number_collection'] = [ 'enabled' => 'true' ];
+}
+```
+
+No priority on `woocommerce_checkout_fields` can reach that. So
+`qhta_commerce_checkout_phone_mode()` drives both — the field array, and that
+option via `pre_option_woocommerce_checkout_phone_field`.
+
+| Mode | Checkout form | Stripe |
+|------|---------------|--------|
+| `hidden` (default) | field removed | not asked for a number |
+| `optional` | field kept, required flag dropped | not asked for a number |
+| `required` | untouched, Woo's own behaviour | collects as before |
+
+Anything unrecognised is treated as `required`, which here means "leave
+everything alone" rather than "assert required". Change it without a deploy:
+
+```php
+add_filter( 'qhta_commerce_checkout_phone_mode', function () {
+	return 'optional';
+} );
+```
+
+**Why forcing that option is acceptable here**, when this plugin otherwise
+refuses to (see the block-checkout note below): in WooCommerce core
+`woocommerce_checkout_phone_field` is read **only by the Blocks checkout**, and
+its only UI is the Checkout *block* editor. On this site's classic checkout,
+nothing in core reads it and nothing has ever written it — it was sitting at its
+`required` default with no screen anywhere to disagree. It is effectively a
+Stripe-facing setting with no owner, and now it has one. **That changes if the
+checkout is ever rebuilt as blocks:** the editor then shows a control for it, and
+this filter would silently override what that control says.
+
+Two mechanical notes: it hooks `pre_option_` rather than `option_` because the
+option doesn't exist in the database, and `get_option()` returns a missing option
+through `default_option_` without ever applying `option_`. And `required` returns
+the short-circuit value untouched, so a stored value still wins if one ever
+appears.
+
+This is also what was really behind the priority puzzle below — the field kept
+coming back required because the *option* still said required.
+
+**Order notes take two hooks, not one.** Unsetting `order_comments` empties the
+section but leaves its **"Additional information" heading** behind — Woo's
+`form-shipping.php` prints that `<h3>` inside a check of
+`woocommerce_enable_order_notes_field`, and never asks whether a field survived.
+So the plugin returns false from that filter too, which is what actually removes
+the heading. Both stay: the filter governs what the template renders, the unset
+governs what is in the field array.
+
+### Classic vs block checkout
+
+**This site runs the classic (shortcode) checkout** — confirmed on the live site,
+8 August 2026. Tweaks 1, 2 and 4 go through `woocommerce_checkout_fields`, which
+is the classic checkout's field array, so they are the working code path here.
+
+It matters because that filter **does nothing on the block checkout**, which
+builds its fields from settings and block attributes instead — and a fresh 2026
+WooCommerce install defaults to block. **If the checkout is ever rebuilt as
+blocks, three of these four silently stop applying.** Check with Pages ->
+Checkout -> Edit: a **"Checkout" block** = block-based; a
+`[woocommerce_checkout]` shortcode = classic.
+
+- **Classic** (today) -> nothing to do. The tweaks are live on activation.
+- **Block** (if it ever moves) -> they become admin steps:
+
+  | Tweak | Block equivalent |
+  |-------|-----------------|
+  | Phone | WooCommerce -> Settings -> checkout settings -> **Phone field** (Optional / Hidden). Stripe's veto above applies here too — its setting comes first. |
+  | Order notes | Pages -> Checkout -> Edit -> select the order-note block -> turn the notes field off |
+  | Username help text | No supported equivalent. Block checkout field descriptions are limited; it needs block bindings or a small custom block, or the description is accepted as absent. |
+
+  Tweak 3 still applies — it is not part of the field array.
+
+The plugin does **not** force those settings from code. It could, and it
+deliberately doesn't: the settings screen would then say one thing while the
+checkout did another, which is worse than a documented admin step.
+
+### Password strength
+
+`woocommerce_min_password_strength` returns **2**. Woo's scale, straight from
+zxcvbn: 0 any, 1 weak, 2 medium, 3 strong (Woo's default), 4 very strong.
+
+Medium still rejects the passwords that actually get accounts taken over —
+`password`, `123456`, the buyer's own email — while removing a wall that stops
+people mid-purchase. The meter still shows and still says "medium"; the filter
+changes what is **accepted**, not what is displayed.
+
+It feeds Woo's password-strength-meter script, so it covers My Account -> Account
+details, the set-password link after checkout, lost-password reset, and the
+classic checkout's account password field. The block checkout renders no password
+field by default (buyers get a set-password link by email) — nothing to relax
+there, and the screen that link leads to is covered.
+
+To use a different number, filter Woo's hook at a later priority; there is no
+QHTA wrapper to go through.
+
+```php
+add_filter( 'woocommerce_min_password_strength', function () {
+	return 3; // back to strong
+}, 20 );
+```
+
+### The username field's dependency
+
+The **Account username** field — and so tweak 4 — exists only because
+WooCommerce's **"Generate account login"** setting is **off**, i.e. buyers pick
+their own username. Turn that on (email-only login) and the field disappears,
+taking the help text with it. Nothing breaks: the tweak is guarded by `isset()`
+and simply becomes a no-op. The same applies to a buyer who is already logged in
+— no account fields, nothing to describe.
+
 ## Structure
 
 ```
@@ -502,7 +660,7 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Six filters, all optional:
+Ten filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -559,6 +717,19 @@ add_filter( 'qhta_commerce_join_url', function () {
 // output, so links and emphasis survive and script does not.
 add_filter( 'qhta_commerce_member_banner_text', function () {
 	return 'Members pay less on every package. <a href="/login/">Log in</a>.';
+} );
+
+// The help text under the account username field on the classic checkout. Also
+// wp_kses_post()'d on output, by WooCommerce.
+add_filter( 'qhta_commerce_account_username_description', function () {
+	return 'Pick a username — it is how you get back in.';
+} );
+
+// What the checkout does with the phone field: 'hidden' (default), 'optional',
+// or 'required' to leave Woo and Stripe entirely alone. Drives both the checkout
+// form and whether Stripe asks for a number — see the checkout section.
+add_filter( 'qhta_commerce_checkout_phone_mode', function () {
+	return 'optional';
 } );
 ```
 
@@ -625,6 +796,27 @@ you through, whatever the reason.
   pages, because the cart button is in the header on every page. It is Woo's own
   script and small, but it does mean one more request on pages that have nothing
   to do with the store.
+- The checkout-field filter runs at **priority 9999**, not the 20 it shipped with
+  in 1.5.0. At 20 the phone field came back marked required while the username
+  description — set in the same pass — took fine. The real cause turned out to be
+  the phone *option*, not a rival filter (see above), so this is belt to that
+  braces. It stays because it costs nothing and does guard a real edge: anything
+  re-asserting a key on a field this filter has unset would recreate it as a bare
+  `array( 'required' => true )`, which renders as an unlabelled text input rather
+  than as nothing.
+- **With WooCommerce inactive the checkout tweaks simply never run.** Both hooks
+  are Woo's own filters, so nothing fires and no Woo function is called; unlike
+  the gate, there is no failing-open to think about — there is no checkout
+  either.
+- WooCommerce renders field descriptions inside a span carrying
+  `aria-hidden="true"`, so a **screen reader does not read the username help text
+  out**. That is core Woo's markup, not something set here. It is supplementary —
+  the field is still labelled "Account username" — but it does mean help text
+  cannot be the only place something important is said.
+- The password-strength number is enforced by Woo's strength-meter script in the
+  browser, which is where Woo enforces it; Woo does not check strength again
+  server-side. Relaxing it to medium does not weaken a server-side check, because
+  there wasn't one.
 
 ## Open items
 
@@ -670,3 +862,14 @@ you through, whatever the reason.
 - **Assign a real product category.** Both products currently show
   "Uncategorised" on the shop. Products -> Categories, e.g. "Study Packages".
   Manual admin task, no code involved.
+- **Confirm the phone fix in Stripe's own logs**, once 1.5.2 is up. Stripe
+  Dashboard -> Developers -> Logs -> the next `POST /v1/checkout/sessions`
+  (creation, no ID on the path — not the update call that follows it): its
+  request body should now have **no `phone_number_collection`** at all. That is
+  the only real proof; the checkout looking right proves half of it. Test and
+  live are separate log streams.
+- **Watch for the checkout being rebuilt as blocks.** It is classic today and
+  three of the four tweaks depend on that — see the block table above for what
+  would then need doing by hand. It would also change the phone switch from
+  "adopting an ownerless setting" to "overriding a control the block editor
+  shows", which is a different bargain and worth revisiting then.

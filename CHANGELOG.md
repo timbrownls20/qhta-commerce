@@ -1,5 +1,196 @@
 # Changelog
 
+## 1.5.2 — 8 August 2026
+
+**1.5.1 broke checkout.** Removing the phone field stopped buyers at the payment
+step with a Stripe.js error:
+
+> A phone number is required to confirm this Checkout Session. Provide a phone
+> number using `updatePhoneNumber()` or pass `phoneNumber` to `confirm()`.
+
+Worse than the asterisk it replaced — a buyer who can neither pay nor see why.
+Upload this before taking any more orders.
+
+### Fixed
+- **Phone is now removed from what Stripe asks for, as well as from the form.**
+  The two are different levers and 1.5.1 pulled only one.
+
+  The WooCommerce Stripe gateway builds its Checkout Session from an **option**,
+  never from the filtered checkout fields
+  (`class-wc-stripe-checkout-sessions-ajax-handler.php`):
+
+  ```php
+  if ( 'required' === get_option( 'woocommerce_checkout_phone_field', 'required' ) ) {
+      $request['phone_number_collection'] = [ 'enabled' => 'true' ];
+  }
+  ```
+
+  No priority on `woocommerce_checkout_fields` reaches that — which also closes
+  the 1.5.1 mystery about "something re-asserting the field after priority 20".
+  Nothing was fighting the filter; the option simply still said `required`, and
+  had never been set, so it was sitting at that default.
+
+  Found in Stripe's API logs: the create call (`POST /v1/checkout/sessions`,
+  no ID on the path) carried `phone_number_collection[enabled]=true` in its
+  **request body**, which rules out the Stripe Dashboard toggle — a parameter in
+  the request overrides it. Same log is how to verify the fix: the next create
+  call should have no `phone_number_collection` at all.
+
+### Added
+- **`qhta_commerce_checkout_phone_mode()`** — one switch driving both levers,
+  `hidden` by default, also `optional` or `required`:
+
+  | Mode | Checkout form | Stripe |
+  |------|---------------|--------|
+  | `hidden` | field removed | not asked for a number |
+  | `optional` | field kept, required flag dropped | not asked for a number |
+  | `required` | untouched | collects as before |
+
+  `required` means "leave everything alone", not "assert required", and anything
+  unrecognised normalises to it. Filterable via
+  `qhta_commerce_checkout_phone_mode`, so the site can move between the three
+  without a deploy.
+
+### Notes
+- **This plugin now forces a WooCommerce option**, via
+  `pre_option_woocommerce_checkout_phone_field` — the thing 1.5.0 explicitly
+  refused to do for the block checkout, so the exception needs justifying.
+
+  In WooCommerce core, `woocommerce_checkout_phone_field` is read **only by the
+  Blocks checkout**, and its only UI is the Checkout *block* editor. On this
+  site's classic checkout nothing in core reads it and nothing has ever written
+  it. There is no settings screen left saying otherwise — it was an
+  effectively Stripe-facing setting with no owner, and now it has one. The 1.5.0
+  objection was to a plugin contradicting a visible control; there is no visible
+  control here.
+
+  **If the checkout is ever rebuilt as blocks that changes**, and the bargain
+  should be revisited: the editor would then show a control for this option and
+  the filter would silently override it.
+- `pre_option_` rather than `option_`, because the option does not exist in the
+  database and `get_option()` returns a missing option through `default_option_`
+  without ever applying `option_` — an `option_` callback would simply never run.
+- The `required` mode returns the short-circuit value untouched rather than
+  asserting `'required'`, so a stored value still wins if one ever appears.
+- Priority 9999 on the field filter stays. Its original reason turned out to be
+  the option, not a rival filter, but it costs nothing and does guard a real
+  edge: anything re-asserting a key on a field this filter has unset would
+  recreate it as a bare `array( 'required' => true )` — an unlabelled text input
+  rather than nothing.
+- Still **no phone number collected at all** in the default `hidden` mode, so
+  orders and order emails carry none. `optional` is the middle ground, and is now
+  safe: Stripe stops requiring one in that mode too, so a buyer leaving it blank
+  no longer hits the payment-step error.
+
+## 1.5.1 — 8 August 2026
+
+Everything here came from looking at the live checkout after 1.5.0 went up.
+
+### Changed
+- **Phone is removed entirely, not made optional.** Decided on sight: nothing on
+  this site phones a buyer — the products are digital, delivery is an account and
+  a link — so an optional field a buyer still stops to consider is a cost with no
+  return.
+
+  This means **no phone number is collected at all**; orders and order emails
+  carry none. Putting it back as optional is one line, noted in the README.
+- **Checkout-field filter moved from priority 20 to 9999.** At 20 the phone
+  field came back marked required on the live checkout while the username
+  description — set in the same pass, same function — took fine. So the field
+  array is being changed again after us, and running last is the cheap fix.
+
+  It matters more now that the tweak *unsets* fields rather than editing them:
+  anything re-asserting a key on a field that is gone recreates it as a bare
+  `array( 'required' => true )`, which renders as an unlabelled text input rather
+  than as nothing.
+
+  **What does the re-asserting is still unidentified.** Most likely a leftover
+  Code Snippet from the batch these tweaks replace — worth finding and deleting,
+  since two things arguing over the same field is the tangle the plugins are
+  meant to end. Added to the README's open items.
+
+### Fixed
+- **The "Additional information" heading is gone**, not just the notes field
+  under it. Unsetting `order_comments` left the checkout showing a heading with
+  nothing beneath it: Woo's `form-shipping.php` prints that `<h3>` inside a check
+  of `woocommerce_enable_order_notes_field`, and never asks whether any field
+  survived the filter. The plugin now returns false from that filter too.
+
+  That switch covers the whole section, heading included, which makes the unset
+  technically redundant on the classic checkout. Both stay — the filter governs
+  what the template renders, the unset governs what is in the field array, so
+  anything reading `get_checkout_fields( 'order' )` directly sees the field gone
+  rather than merely unrendered.
+
+  Returning false rather than setting the `woocommerce_enable_order_comments`
+  option, because that option is the block checkout's order-note toggle: writing
+  it would move a control the block editor owns and displays the state of.
+
+### Notes
+- **The site runs the classic checkout** — confirmed live, so the field tweaks
+  are the working code path rather than a fallback, and 1.5.0's open question
+  about which checkout is closed. The block equivalents stay documented against
+  the day the checkout is rebuilt, which is the one thing that would silently
+  stop three of these four applying.
+
+## 1.5.0 — 8 August 2026
+
+### Added
+- **Checkout tweaks** — four adjustments to the WooCommerce store checkout and
+  account, in a new section 6 of the plugin file:
+  - **Phone is optional.** The field stays; the required flag goes. Buyers who
+    have a phone number can still leave one, they are just not stopped at the
+    door for not having one. Removing it entirely is one line away
+    (`unset( $fields['billing']['billing_phone'] )`) if that turns out to be
+    wanted — optional was judged the smaller change.
+  - **Order notes removed.** The products are digital and there is no fulfilment
+    step to instruct, so the field was asking for something nobody reads.
+  - **Password strength down to medium** (2 on Woo's zxcvbn scale, from Woo's
+    default of 3/strong). Medium still rejects `password`, `123456` and the
+    buyer's own email — it removes a wall, not the floor. The meter still shows;
+    the filter changes what is *accepted*, not what is displayed.
+  - **Help text on the account username field**, saying what the account is
+    actually for: "you'll use it (or your email) to log in and access your
+    recordings anytime." Buyers read "username" as one more form field; it is how
+    they reach what they just paid for.
+
+  Wording is filterable via `qhta_commerce_account_username_description`, the
+  same treatment the member banner's text gets.
+
+### Notes
+- **These three sit behind classic-vs-block.** Phone, order notes and the
+  username text all go through `woocommerce_checkout_fields`, which is the
+  *classic* (shortcode) checkout's field array and **does nothing on the block
+  checkout** — that builds its fields from settings and block attributes instead.
+  A fresh 2026 Woo install defaults to block, so **confirm which this site uses**
+  (Pages -> Checkout -> Edit) before testing: on block, the equivalents are admin
+  steps, tabulated in the README.
+
+  The plugin does **not** force the underlying options from code to cover the
+  block case. It could — `option_woocommerce_checkout_phone_field` is right
+  there — and deliberately doesn't: the settings screen would then say one thing
+  while the checkout did another, which is a worse problem than a documented
+  admin step. Password strength is unaffected either way; it feeds Woo's strength
+  meter, not the field array.
+- **The username tweak has a dependency worth knowing.** The Account username
+  field only exists because Woo's "Generate account login" setting is off (buyers
+  pick their own). Switch that on and the field — and the help text with it —
+  disappears. Guarded by `isset()`, so it degrades to a no-op rather than a
+  notice.
+- **Homed here by the checkout-split rule**, now recorded in the README's Scope
+  section: a checkout tweak belongs to the plugin owning *the checkout it acts
+  on*, not the one owning the kind of change. Woo store checkout -> here; PMPro
+  membership checkout (`pmpro_is_checkout()`, `.pmpro_form`) -> `qhta-membership`.
+  Same-looking change, same-looking field, different plugin. This reassigns the
+  backlog items "remove order notes", "limiting mandatory billing fields" and
+  "password strength" out of `qhta-membership`.
+- Filter runs at **priority 20**, after Woo builds the array and after anything
+  adding fields at the default 10 — a field added later at 10 could otherwise put
+  back the required flag this clears.
+- No WooCommerce guard on either hook, and none needed: both are Woo's own
+  filters, so with WooCommerce inactive neither fires and no Woo function is
+  called.
+
 ## 1.4.1 — 7 August 2026
 
 ### Changed
