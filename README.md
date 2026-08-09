@@ -688,12 +688,28 @@ belongs in `qhta-theme-extras`, using the brand tokens:
 
 | Class | What it is |
 |-------|-----------|
-| `.qhta-access-resources` | the thank-you section, with `__title`, `__list`, `__item`, `__link` |
+| `.qhta-access-resources` | the thank-you section, with `__title`, `__table`, `__row`, `__cell`, `__link` |
 | `.qhta-email-notice` | the checkout notice — a subtle info line |
 
-The resource links also carry WooCommerce's own `button` class, so they pick up
-whatever the theme already gives Woo buttons. Until theme-extras ships the rest,
-that is all the styling there is: the notice renders as a plain paragraph.
+The section is rendered as a **table, one row per resource**, matching Woo's own
+order-details table directly below it. It borrows that table's classes to get
+there — `woocommerce-order-details__title` on the heading,
+`woocommerce-table shop_table order_details` on the table, and the line-item
+classes on each row — so borders, padding and cell rhythm come out identical
+without a line of CSS.
+
+Every borrowed class is a **second** class, never a replacement: the theme's
+styling hangs off Woo's names, anything `qhta-theme-extras` wants to change hangs
+off the `qhta-` ones.
+
+No `thead`. A single column whose header would only repeat the heading directly
+above it is noise; add one if a second column ever earns its place.
+
+The links are plain links — they carried Woo's `button` class in 1.6.0 and read
+louder than the page needed.
+
+So the only piece still genuinely unstyled is the checkout notice, which renders
+as a plain paragraph until theme-extras picks it up.
 
 **This is a departure from the carve-out** in Scope above, which keeps the CSS
 for plugin-created components (the member banner, the cart button) here in

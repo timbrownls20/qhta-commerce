@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.6.2 — 9 August 2026
+
+### Changed
+- **"Access your resources" is a table now**, one row per resource, matching the
+  order-details table it sits directly above. As a bulleted list it read as
+  something floating over the page rather than part of it. Bullets went with the
+  list.
+
+  Same trick as 1.6.1's heading, extended: the table borrows Woo's own
+  `woocommerce-table shop_table order_details` classes and the line-item classes
+  on each row, so borders, padding and cell rhythm come out identical to the
+  table below without a line of CSS. All still **second** classes — the theme's
+  styling hangs off Woo's names, anything `qhta-theme-extras` wants to change
+  hangs off the `qhta-` ones.
+
+  Class names changed with the markup: `__list` / `__item` are now `__table` /
+  `__row` / `__cell`. Nothing styled them yet, so nothing breaks.
+
+  No `thead` — a single column whose header would only repeat the heading
+  directly above it is noise. One goes in if a second column ever earns its
+  place.
+- The section wrapper deliberately does **not** take Woo's
+  `woocommerce-order-details` class. The table classes carry the look on their
+  own; adding it would also wrap the section in that component's outer box,
+  which is a bigger change than was asked for and easy to add later if the box
+  is wanted.
+
+## 1.6.1 — 9 August 2026
+
+Both from seeing the thank-you page on a real order.
+
+### Changed
+- **"Access your resources" now matches the "Order details" heading** instead of
+  rendering at the theme's full h2 size, where it dwarfed the page it was
+  introducing.
+
+  Done by adding WooCommerce's own `woocommerce-order-details__title` class
+  alongside `qhta-access-resources__title` — borrowing the answer the theme has
+  already given for the heading directly below it, the same move the cart button
+  makes elsewhere. A **second** class rather than a replacement, so the theme's
+  styling hangs off Woo's name and anything `qhta-theme-extras` wants to change
+  hangs off ours. Also means no CSS deploy to fix a size.
+- **The resource links are plain links, not buttons.** The `button` class went;
+  they read louder than the page needed. Tim's call.
+
 ## 1.6.0 — 9 August 2026
 
 Second batch of checkout work, from the School/Institution + resources-link spec.

@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), store checkout tweaks, and an "Access your resources" section on the thank-you page. No theme presentation, no conference domain logic.
- * Version:           1.6.0
+ * Version:           1.6.2
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.6.0' );
+define( 'QHTA_COMMERCE_VERSION', '1.6.2' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -2004,9 +2004,30 @@ function qhta_commerce_access_resources_heading() {
  * product carrying its own link still shows it. Worth a look on a real order if
  * both end up saying the same thing.
  *
- * The `button` class is WooCommerce's own, so the links pick up whatever the
- * theme already gives Woo buttons; everything else is a qhta- class for
- * qhta-theme-extras to style.
+ * Markup is a table matching Woo's own order-details table — one row per
+ * resource — rather than the list it started as. It sits directly above that
+ * table and now reads as part of the same page instead of a loose list floating
+ * over it. Bullets go with the list.
+ *
+ * Every Woo class here is borrowed presentation, the theme having already
+ * answered these questions for the table below:
+ *
+ *   - woocommerce-order-details__title on the heading, so it matches the "Order
+ *     details" heading rather than rendering at the theme's full h2 size, which
+ *     dwarfed everything around it;
+ *   - woocommerce-table / shop_table / order_details on the table, and the
+ *     line-item classes on each row, so borders, padding and cell rhythm come
+ *     out identical to the table underneath.
+ *
+ * All of them are *second* classes, never replacements: the theme's styling
+ * hangs off Woo's names, anything qhta-theme-extras wants to change hangs off
+ * the qhta- ones.
+ *
+ * No thead. One column whose heading would only repeat the h2 directly above it
+ * is noise — add one if a second column ever earns its place.
+ *
+ * The links carry no `button` class. They were buttons in 1.6.0 and read louder
+ * than the page needed; plain links, Tim's call.
  *
  * @param int $order_id Order just placed.
  */
@@ -2025,16 +2046,20 @@ function qhta_commerce_thankyou_resources( $order_id ) {
 
 	?>
 	<section class="qhta-access-resources">
-		<h2 class="qhta-access-resources__title"><?php echo esc_html( qhta_commerce_access_resources_heading() ); ?></h2>
-		<ul class="qhta-access-resources__list">
-			<?php foreach ( $pages as $page_id ) : ?>
-				<li class="qhta-access-resources__item">
-					<a class="button qhta-access-resources__link" href="<?php echo esc_url( get_permalink( $page_id ) ); ?>">
-						<?php echo esc_html( get_the_title( $page_id ) ); ?>
-					</a>
-				</li>
-			<?php endforeach; ?>
-		</ul>
+		<h2 class="woocommerce-order-details__title qhta-access-resources__title"><?php echo esc_html( qhta_commerce_access_resources_heading() ); ?></h2>
+		<table class="woocommerce-table woocommerce-table--order-details shop_table order_details qhta-access-resources__table">
+			<tbody>
+				<?php foreach ( $pages as $page_id ) : ?>
+					<tr class="woocommerce-table__line-item order_item qhta-access-resources__row">
+						<td class="woocommerce-table__product-name product-name qhta-access-resources__cell">
+							<a class="qhta-access-resources__link" href="<?php echo esc_url( get_permalink( $page_id ) ); ?>">
+								<?php echo esc_html( get_the_title( $page_id ) ); ?>
+							</a>
+						</td>
+					</tr>
+				<?php endforeach; ?>
+			</tbody>
+		</table>
 	</section>
 	<?php
 }
