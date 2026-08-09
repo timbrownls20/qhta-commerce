@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name:       QHTA Commerce
- * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), and store checkout tweaks. No theme presentation, no conference domain logic.
- * Version:           1.5.2
+ * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), store checkout tweaks, and an "Access your resources" section on the thank-you page. No theme presentation, no conference domain logic.
+ * Version:           1.6.0
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.5.2' );
+define( 'QHTA_COMMERCE_VERSION', '1.6.0' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -1525,11 +1525,12 @@ add_filter( 'woocommerce_add_to_cart_fragments', 'qhta_commerce_cart_button_frag
 /* -------------------------------------------------------------------------
  * 6. Checkout tweaks
  *
- * Four adjustments to the WooCommerce store checkout and account: phone gone —
- * from the form *and* from what Stripe asks for, which are two different levers
- * (see qhta_commerce_checkout_phone_mode) — order notes gone, heading included,
- * password strength down to medium, and a line of help text on the account
- * username field.
+ * Adjustments to the WooCommerce store checkout and account: phone gone — from
+ * the form *and* from what Stripe asks for, which are two different levers (see
+ * qhta_commerce_checkout_phone_mode) — order notes gone, heading included,
+ * password strength down to medium, help text on the account username field,
+ * "Company name" relabelled to "School or Institution" and made required, and a
+ * notice at the top of the form saying access arrives by email.
  *
  * These live here rather than in qhta-membership under the checkout-split rule:
  * a checkout tweak is homed by *which checkout it acts on*. These four act on
@@ -1688,7 +1689,8 @@ function qhta_commerce_account_username_description() {
 }
 
 /**
- * Phone per the mode above, order notes removed, username explained.
+ * Phone per the mode above, order notes removed, username explained, company
+ * relabelled and required.
  *
  * Priority 9999, not the 20 this shipped with. At 20 the phone field came back
  * marked required on the live checkout while the username description — set in
@@ -1742,6 +1744,16 @@ function qhta_commerce_checkout_fields( $fields ) {
 	// field; it is actually how they reach what they just paid for.
 	if ( isset( $fields['account']['account_username'] ) ) {
 		$fields['account']['account_username']['description'] = qhta_commerce_account_username_description();
+	}
+
+	// 4. Company becomes School or Institution, and becomes required. Teachers
+	// buy in an institutional context, so it is a wanted detail rather than the
+	// optional afterthought "Company name" reads as — and it prints on the tax
+	// invoice, which is the reason it has to be reliable.
+	if ( isset( $fields['billing']['billing_company'] ) ) {
+		$fields['billing']['billing_company']['label']       = __( 'School or Institution', 'qhta-commerce' );
+		$fields['billing']['billing_company']['placeholder'] = __( 'Your school or institution', 'qhta-commerce' );
+		$fields['billing']['billing_company']['required']    = true;
 	}
 
 	return $fields;
@@ -1804,9 +1816,233 @@ function qhta_commerce_min_password_strength() {
 }
 add_filter( 'woocommerce_min_password_strength', 'qhta_commerce_min_password_strength' );
 
+/**
+ * The checkout's "how you get your resources" notice.
+ *
+ * Filterable for wording without a deploy, and passed through wp_kses_post() on
+ * output, so a filter can return links and emphasis but not script — the same
+ * treatment qhta_commerce_member_banner_text() gets.
+ *
+ * The tab is named by qhta_commerce_content_label() rather than written out, so
+ * renaming My Content renames it here too instead of leaving the checkout
+ * pointing at a tab that no longer goes by that name.
+ *
+ * @return string HTML.
+ */
+function qhta_commerce_email_notice_text() {
+	$text = sprintf(
+		/* translators: 1: opening <strong> tag. 2: name of the My Account tab holding purchased content. 3: closing </strong> tag. */
+		__( 'After payment, we&rsquo;ll email you a link to access your resources — and they&rsquo;ll always be available under %1$s%2$s%3$s in your account.', 'qhta-commerce' ),
+		'<strong>',
+		esc_html( qhta_commerce_content_label() ),
+		'</strong>'
+	);
+
+	return apply_filters( 'qhta_commerce_email_notice_text', $text );
+}
+
+/**
+ * Say at the top of the checkout that access arrives by email.
+ *
+ * Sets the expectation before the buyer pays, which is the cheapest way to stop
+ * the "where is my product?" email that a digital purchase otherwise invites.
+ *
+ * Top of the form rather than above the Place Order button — Tim's call. The
+ * trade is real: above the button it is read at the moment of paying and cannot
+ * be scrolled past, whereas here it is read first and may be scrolled past. Move
+ * it by swapping the hook below for woocommerce_review_order_before_submit.
+ *
+ * Scoped by the hook: woocommerce_before_checkout_form fires inside Woo's own
+ * checkout template only, so nothing is emitted on any other page — not the cart,
+ * not the pay-for-order page, not order-received.
+ *
+ * Structure and class only. Appearance belongs in qhta-theme-extras, per this
+ * spec; see the README for how that sits with the shopfront CSS carve-out.
+ */
+function qhta_commerce_email_notice() {
+	$text = qhta_commerce_email_notice_text();
+
+	if ( ! $text ) {
+		return;
+	}
+
+	printf( '<p class="qhta-email-notice">%s</p>', wp_kses_post( $text ) );
+}
+add_action( 'woocommerce_before_checkout_form', 'qhta_commerce_email_notice' );
+
 
 /* -------------------------------------------------------------------------
- * 7. Admin notices
+ * 7. Thank-you page — "Access your resources"
+ *
+ * The inverse of the My Content tab in section 3. That answers "everything this
+ * customer owns"; this answers "what this one order just bought", by walking the
+ * order's products back to the pages gated against them through the same
+ * QHTA_GATE_META mapping.
+ *
+ * So gating a new page puts it on the thank-you page of every order containing
+ * its product, with no code change — the same property the tab has, for the same
+ * reason.
+ *
+ * Structure and classes only, no CSS. Appearance belongs in qhta-theme-extras
+ * per this spec, which is a departure from the carve-out in section 5 — see the
+ * README.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Published gated pages unlocked by any of these products.
+ *
+ * The reverse of the per-page lookup the gate does: given products, find pages,
+ * rather than given a page, find its product.
+ *
+ * A value comparison rather than the EXISTS that qhta_commerce_accessible_pages()
+ * uses, because here we know which products to match — and 0 is filtered out on
+ * the way in so a page storing 0 (public, per qhta_commerce_save_meta_box) can
+ * never be matched by an order that happens to contain product 0.
+ *
+ * @param int[] $product_ids Product IDs from an order.
+ * @return int[] Page IDs, ordered by title.
+ */
+function qhta_commerce_pages_for_products( $product_ids ) {
+	$product_ids = array_filter( array_map( 'absint', (array) $product_ids ) );
+
+	if ( empty( $product_ids ) ) {
+		return array();
+	}
+
+	return get_posts(
+		array(
+			'post_type'   => 'page',
+			'post_status' => 'publish',
+			'numberposts' => -1,
+			'fields'      => 'ids',
+			'orderby'     => 'title',
+			'order'       => 'ASC',
+			'meta_query'  => array(
+				array(
+					'key'     => QHTA_GATE_META,
+					'value'   => array_values( $product_ids ),
+					'compare' => 'IN',
+				),
+			),
+		)
+	);
+}
+
+/**
+ * Gated pages this order bought that the buyer can actually open.
+ *
+ * Two steps, and the second is the important one: every candidate page is put
+ * through qhta_commerce_is_entitled() — the same question the gate asks — so a
+ * link can never be offered that the gate would then refuse. A thank-you page
+ * that hands someone a link to a redirect is worse than one that stays quiet.
+ *
+ * That coupling has a consequence worth knowing: **an order that has not reached
+ * a paid status yet shows nothing**, because wc_customer_bought_product() only
+ * matches completed and processing. With a card payment the order is already
+ * processing by the time this renders. With a slower method it would not be, and
+ * the buyer would see no links here — correctly, since the gate would have
+ * turned them away — and would find the pages under My Content once the payment
+ * lands.
+ *
+ * Guest orders show nothing for the same reason: entitlement is checked against
+ * the logged-in user, and a guest cannot pass the gate whatever this printed.
+ * Buyers who create an account at checkout — the normal path here — are logged in
+ * by the time they arrive.
+ *
+ * Variations need no special handling: get_product_id() returns the parent, which
+ * is what pages are gated against.
+ *
+ * @param WC_Order $order Order to look up.
+ * @return int[] Page IDs, ordered by title.
+ */
+function qhta_commerce_order_resource_pages( $order ) {
+	if ( ! $order instanceof WC_Order ) {
+		return array();
+	}
+
+	$product_ids = array();
+
+	foreach ( $order->get_items() as $item ) {
+		$product_ids[] = (int) $item->get_product_id();
+	}
+
+	$pages      = qhta_commerce_pages_for_products( array_unique( $product_ids ) );
+	$accessible = array();
+
+	foreach ( $pages as $page_id ) {
+		$product_id = (int) get_post_meta( $page_id, QHTA_GATE_META, true );
+
+		if ( $product_id > 0 && qhta_commerce_is_entitled( $product_id, $page_id ) ) {
+			$accessible[] = $page_id;
+		}
+	}
+
+	return $accessible;
+}
+
+/**
+ * The section's heading.
+ *
+ * @return string
+ */
+function qhta_commerce_access_resources_heading() {
+	return apply_filters( 'qhta_commerce_access_resources_heading', __( 'Access your resources', 'qhta-commerce' ) );
+}
+
+/**
+ * Print the links on the thank-you page.
+ *
+ * Priority 5 so this lands *above* the order table: WooCommerce hooks
+ * woocommerce_order_details_table onto the same action at 10, and what a buyer
+ * wants first is the way in to what they just bought, not a summary of what they
+ * paid. Raise the number past 10 to put it below the table instead.
+ *
+ * Nothing renders when the order has no gated products, which is the ordinary
+ * case for any future non-gated product, so no empty heading appears.
+ *
+ * Deliberately does not touch the product's Purchase Note — Tim's call — so a
+ * product carrying its own link still shows it. Worth a look on a real order if
+ * both end up saying the same thing.
+ *
+ * The `button` class is WooCommerce's own, so the links pick up whatever the
+ * theme already gives Woo buttons; everything else is a qhta- class for
+ * qhta-theme-extras to style.
+ *
+ * @param int $order_id Order just placed.
+ */
+function qhta_commerce_thankyou_resources( $order_id ) {
+	$order = wc_get_order( $order_id );
+
+	if ( ! $order ) {
+		return;
+	}
+
+	$pages = qhta_commerce_order_resource_pages( $order );
+
+	if ( empty( $pages ) ) {
+		return;
+	}
+
+	?>
+	<section class="qhta-access-resources">
+		<h2 class="qhta-access-resources__title"><?php echo esc_html( qhta_commerce_access_resources_heading() ); ?></h2>
+		<ul class="qhta-access-resources__list">
+			<?php foreach ( $pages as $page_id ) : ?>
+				<li class="qhta-access-resources__item">
+					<a class="button qhta-access-resources__link" href="<?php echo esc_url( get_permalink( $page_id ) ); ?>">
+						<?php echo esc_html( get_the_title( $page_id ) ); ?>
+					</a>
+				</li>
+			<?php endforeach; ?>
+		</ul>
+	</section>
+	<?php
+}
+add_action( 'woocommerce_thankyou', 'qhta_commerce_thankyou_resources', 5 );
+
+
+/* -------------------------------------------------------------------------
+ * 8. Admin notices
  *
  * Both states this plugin can be in that look fine from wp-admin and are not:
  * a gate that is not being enforced, and a store the public cannot see.

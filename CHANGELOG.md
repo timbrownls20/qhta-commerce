@@ -1,5 +1,88 @@
 # Changelog
 
+## 1.6.0 — 9 August 2026
+
+Second batch of checkout work, from the School/Institution + resources-link spec.
+
+### Added
+- **"Company name" is now "School or Institution", and required.** Teachers buy
+  in an institutional context, so it is a wanted detail rather than the optional
+  afterthought the stock label reads as. Placeholder "Your school or
+  institution". Required is enforced server-side — Woo validates against the same
+  filtered field array — so an order cannot complete without it.
+
+  **It reaches the tax invoice with no invoice-plugin change.**
+  `qhta-woo-invoice` renders the buyer block through
+  `get_formatted_billing_address()`, which already includes the company line;
+  making the field required is what makes that line reliable. A distinct labelled
+  "School or Institution:" row would be a template override over there, and is
+  not done here.
+
+  Wording is "School **or** Institution", not the spec's "School / Institution" —
+  Tim's call.
+- **"Access your resources" on the thank-you page** — links straight to the gated
+  page(s) for what that order just bought, above the order summary.
+
+  The **inverse of the My Content tab**: that answers "everything this customer
+  owns", this answers "what this one order just bought". Both walk the same
+  `_qhta_gate_product_id` mapping, so gating a new page puts it on the thank-you
+  page of every order containing its product, with no code change.
+
+  Every link goes through `qhta_commerce_is_entitled()` — the same question the
+  gate asks — so a link can never be offered that the gate would then refuse. A
+  thank-you page handing someone a link to a redirect is worse than one that
+  stays quiet. Consequences worth knowing: an order not yet at a paid status
+  shows nothing (correct — the gate would turn them away, and My Content picks
+  them up once payment lands), and guest orders show nothing (a guest cannot pass
+  the gate whatever this printed).
+
+  Priority 5, so it sits **above** the order table — Woo hooks that table onto
+  the same action at 10, and what a buyer wants first is the way in, not a
+  summary of what they paid.
+
+  **Purchase Notes are left alone** — Tim's call — so a product carrying its own
+  link still shows it. Worth a look on a real order if both say the same thing.
+- **Checkout notice: "After payment, we'll email you a link to access your
+  resources — and they'll always be available under My Content in your
+  account."** At the **top of the form**, Tim's call over the alternative of
+  sitting above the Place Order button. The trade is real and worth recording:
+  above the button it is read at the moment of paying and cannot be scrolled
+  past; at the top it is read first and can be. Swapping the hook is the whole
+  change.
+
+  The tab is named by `qhta_commerce_content_label()` rather than written out, so
+  renaming My Content renames it in the notice too.
+
+### Notes
+- **These two components ship no CSS**, unlike the member banner and cart button.
+  The spec assigned their appearance to `qhta-theme-extras`, and that is what
+  shipped: `.qhta-access-resources` (with `__title`, `__list`, `__item`,
+  `__link`) and `.qhta-email-notice`, plus WooCommerce's own `button` class on
+  the links so they inherit whatever the theme gives Woo buttons.
+
+  **This contradicts the carve-out made in 1.4.0**, which keeps the CSS for
+  plugin-created components in `assets/qhta-commerce.css` — one repo, one deploy,
+  no cross-repo class-name contract. Both are reasonable; having both is not.
+  Flagged in the README's open items rather than silently resolved, because the
+  1.4.0 decision was deliberate and this spec was explicit.
+
+  Until theme-extras ships the rest, the notice renders as a plain paragraph.
+- **The relabel does not reach My Account -> Addresses**, which still says
+  "Company name" — that form is built from `woocommerce_billing_fields`, not
+  `woocommerce_checkout_fields`. The checkout was the scope; one more filter if
+  the address book should match.
+- **`woocommerce_checkout_company_field` is left alone**, unlike the phone option
+  in 1.5.2. That exception existed because Stripe read the option and no visible
+  control did; here there is no second consumer to satisfy, so there is no reason
+  to reach for an option nothing on a classic checkout reads.
+- Three new filters — `qhta_commerce_email_notice_text` (wp_kses_post'd on
+  output; return an empty string to print nothing) and
+  `qhta_commerce_access_resources_heading`, plus the page lookup being reusable
+  through `qhta_commerce_pages_for_products()`.
+- Still no WooCommerce guards needed on the new hooks:
+  `woocommerce_before_checkout_form` and `woocommerce_thankyou` are Woo's own, so
+  with WooCommerce inactive neither fires.
+
 ## 1.5.2 — 8 August 2026
 
 **1.5.1 broke checkout.** Removing the phone field stopped buyers at the payment

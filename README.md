@@ -1,6 +1,6 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Five jobs:
+WooCommerce-side logic plugin for qhta.com.au. Six jobs:
 
 - **gating pages behind a WooCommerce purchase**, so paid content (conference
   recordings and the like) is locked without a membership plugin;
@@ -10,7 +10,10 @@ WooCommerce-side logic plugin for qhta.com.au. Five jobs:
 - **shopfront personalisation** — a member-pricing banner on the shop, and a
   header cart button with a live item count;
 - **checkout tweaks** — phone gone, order notes gone, password strength down to
-  medium, and the account username field explained.
+  medium, the account username field explained, "School or Institution" made
+  required, and a notice saying access arrives by email;
+- **an "Access your resources" section on the thank-you page**, linking straight
+  to the gated pages for what that order just bought.
 
 ## Scope
 
@@ -32,10 +35,11 @@ conference-specific?" Yes -> here.
 
 **Checkout split:** there are two checkouts on this site, and a checkout tweak is
 homed by *which one it acts on*, not by what it does. WooCommerce store checkout
-(`woocommerce_checkout_fields`, `order_comments`, Woo's password strength) ->
-here. PMPro membership checkout (`pmpro_is_checkout()`, `.pmpro_form`) ->
-`qhta-membership`. The same-looking change to the same-looking field lands in
-different plugins depending on which form it is.
+and its thank-you page (`woocommerce_checkout_fields`, `order_comments`,
+`woocommerce_thankyou`, Woo's password strength) -> here. PMPro membership
+checkout (`pmpro_is_checkout()`, `.pmpro_form`) -> `qhta-membership`. The
+same-looking change to the same-looking field lands in different plugins
+depending on which form it is.
 
 Deliberately out of scope: member pricing and discounts (the PMPro WooCommerce
 Integration add-on owns that, per-product), account creation and emails (native
@@ -447,11 +451,47 @@ under Scope.)
 | 2 | **Order notes removed**, "Additional information" heading included | classic checkout only |
 | 3 | **Password strength: medium**, down from strong | everywhere Woo's strength meter runs |
 | 4 | **Account username help text** | classic checkout only |
+| 5 | **"Company name" -> "School or Institution"**, and required | classic checkout only |
+| 6 | **Email notice** at the top of the form | classic checkout only |
 
 Tweak 4's wording:
 
 > Choose a username — you'll use it (or your email) to log in and access your
 > recordings anytime.
+
+Tweak 6's wording:
+
+> After payment, we'll email you a link to access your resources — and they'll
+> always be available under **My Content** in your account.
+
+The tab is named by `qhta_commerce_content_label()` rather than written out, so
+renaming My Content renames it in the notice too.
+
+### School or Institution
+
+`billing_company` is relabelled **School or Institution** (placeholder "Your
+school or institution") and made **required** — teachers buy in an institutional
+context, so it is a wanted detail rather than the optional afterthought "Company
+name" reads as. Required is enforced server-side: Woo validates against the same
+filtered field array, so an order cannot complete without it.
+
+**It reaches the invoice with no invoice-plugin change.** `qhta-woo-invoice`
+renders the buyer block through `get_formatted_billing_address()`, which already
+includes the company line — making the field required is what makes that line
+reliable. A distinct labelled "School or Institution:" row on the invoice would
+be a template override in that plugin, and is not done here.
+
+Two things this does **not** cover, both deliberate:
+
+- **My Account -> Addresses still says "Company name".** That form is built from
+  `woocommerce_billing_fields`, not `woocommerce_checkout_fields`, so the relabel
+  does not reach it. In scope was the checkout. If the address book should match,
+  it is one more filter — say so and it goes in.
+- **The `woocommerce_checkout_company_field` option is left alone.** Unlike the
+  phone case above there is no second consumer needing to agree, so there is no
+  reason to reach for an option nothing on a classic checkout reads. On a block
+  checkout this tweak would instead be the editor's Company field set to
+  Required.
 
 ### The phone field — two levers, one switch
 
@@ -575,6 +615,24 @@ add_filter( 'woocommerce_min_password_strength', function () {
 }, 20 );
 ```
 
+### The email notice
+
+A line at the **top of the checkout form** (`woocommerce_before_checkout_form`)
+telling the buyer that access arrives by email and lives in their account. It
+sets the expectation before they pay, which is the cheapest way to stop the
+"where is my product?" email a digital purchase otherwise invites.
+
+Top of form was the call over the alternative — above the Place Order button
+(`woocommerce_review_order_before_submit`). The trade is real: above the button
+it is read at the moment of paying and cannot be scrolled past; at the top it is
+read first and can be. Swapping the hook is the whole change.
+
+Wording is filterable via `qhta_commerce_email_notice_text` and passed through
+`wp_kses_post()` on output, so a filter can return links and emphasis but not
+script. Returning an empty string prints nothing.
+
+The plugin ships `<p class="qhta-email-notice">` and no CSS — see Styling below.
+
 ### The username field's dependency
 
 The **Account username** field — and so tweak 4 — exists only because
@@ -583,6 +641,67 @@ their own username. Turn that on (email-only login) and the field disappears,
 taking the help text with it. Nothing breaks: the tweak is guarded by `isset()`
 and simply becomes a no-op. The same applies to a buyer who is already logged in
 — no account fields, nothing to describe.
+
+## Thank-you page — "Access your resources"
+
+After paying, the buyer gets a section linking straight to the gated page(s) for
+**what that order bought**, above the order summary.
+
+It is the **inverse of the My Content tab**: that answers "everything this
+customer owns", this answers "what this one order just bought". Both walk the
+same `_qhta_gate_product_id` mapping, so gating a new page puts it on the
+thank-you page of every order containing its product, with no code change.
+
+**Every link is checked against `qhta_commerce_is_entitled()`** — the same
+question the gate asks — so a link can never be offered that the gate would then
+refuse. A thank-you page handing someone a link to a redirect is worse than one
+that stays quiet. Three consequences follow:
+
+- **An order that has not reached a paid status shows nothing.** With a card
+  payment the order is already *processing* by the time this renders, so links
+  appear. With a slower method they would not — correctly, since the gate would
+  have turned the buyer away — and the pages turn up under My Content once the
+  payment lands.
+- **Guest orders show nothing**, because entitlement is checked against the
+  logged-in user and a guest cannot pass the gate whatever this printed. Buyers
+  who create an account at checkout, the normal path here, are logged in by the
+  time they arrive.
+- **An order with no gated products renders nothing at all** — no empty heading.
+
+Variations need no special handling: an order records the parent product, which
+is what pages are gated against.
+
+**Position:** priority 5 on `woocommerce_thankyou`, which puts it *above* the
+order table — WooCommerce hooks that table onto the same action at 10, and what a
+buyer wants first is the way in, not a summary of what they paid. Raise the
+number past 10 to move it below.
+
+**Purchase Notes are left alone**, so a product carrying its own link still shows
+it. Worth a look on a real order if both end up saying the same thing.
+
+Heading text is filterable via `qhta_commerce_access_resources_heading`.
+
+### Styling
+
+**These two components ship structure and classes only — no CSS.** Appearance
+belongs in `qhta-theme-extras`, using the brand tokens:
+
+| Class | What it is |
+|-------|-----------|
+| `.qhta-access-resources` | the thank-you section, with `__title`, `__list`, `__item`, `__link` |
+| `.qhta-email-notice` | the checkout notice — a subtle info line |
+
+The resource links also carry WooCommerce's own `button` class, so they pick up
+whatever the theme already gives Woo buttons. Until theme-extras ships the rest,
+that is all the styling there is: the notice renders as a plain paragraph.
+
+**This is a departure from the carve-out** in Scope above, which keeps the CSS
+for plugin-created components (the member banner, the cart button) here in
+`assets/qhta-commerce.css` — one repo, one deploy. The spec for these two
+assigned their styling to `qhta-theme-extras` instead, and that is what shipped.
+Worth settling one way or the other rather than leaving the codebase with two
+answers: moving them into `assets/qhta-commerce.css` is a small change if
+consistency is preferred.
 
 ## Structure
 
@@ -660,7 +779,7 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Ten filters, all optional:
+Twelve filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -730,6 +849,17 @@ add_filter( 'qhta_commerce_account_username_description', function () {
 // form and whether Stripe asks for a number — see the checkout section.
 add_filter( 'qhta_commerce_checkout_phone_mode', function () {
 	return 'optional';
+} );
+
+// The checkout's "access arrives by email" notice. wp_kses_post()'d on output;
+// return an empty string to print nothing.
+add_filter( 'qhta_commerce_email_notice_text', function () {
+	return 'Your resources are emailed to you and saved to your account.';
+} );
+
+// The thank-you section's heading.
+add_filter( 'qhta_commerce_access_resources_heading', function () {
+	return 'Start reading';
 } );
 ```
 
@@ -869,7 +999,19 @@ you through, whatever the reason.
   the only real proof; the checkout looking right proves half of it. Test and
   live are separate log streams.
 - **Watch for the checkout being rebuilt as blocks.** It is classic today and
-  three of the four tweaks depend on that — see the block table above for what
+  most of the checkout tweaks depend on that — see the block table above for what
   would then need doing by hand. It would also change the phone switch from
   "adopting an ownerless setting" to "overriding a control the block editor
   shows", which is a different bargain and worth revisiting then.
+- **Style `.qhta-access-resources` and `.qhta-email-notice` in
+  `qhta-theme-extras`.** Until that ships they render nearly bare — the resource
+  links get whatever the theme gives Woo's `button` class, the notice is a plain
+  paragraph. **Or settle the inconsistency the other way:** the member banner and
+  cart button keep their CSS inside this plugin (Scope, above), and these two do
+  not. One answer would be better than two.
+- **Check the thank-you links against the product Purchase Note on a real
+  order.** Purchase Notes are deliberately untouched, so a product carrying its
+  own link will show both. Fine if they say different things, redundant if not.
+- **Decide whether My Account -> Addresses should also say "School or
+  Institution".** It still says "Company name" — that form is built from a
+  different filter, and the checkout was the scope. One more filter if wanted.
