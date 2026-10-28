@@ -75,7 +75,10 @@ function qhta_commerce_published_page_url( $page_id ) {
  * ---------------------------------------------------------------------- */
 
 /**
- * Render the Event page dropdown.
+ * Render the event fields: Event page, Ask dietary requirements, Dietary options.
+ *
+ * The dietary pair is per event — see includes/event-checkout-fields.php for
+ * what checkout does with them.
  */
 function qhta_commerce_event_page_field() {
 	global $product_object;
@@ -89,6 +92,13 @@ function qhta_commerce_event_page_field() {
 		esc_html__( 'Event page', 'qhta-commerce' )
 	);
 
+	// Flat, not hierarchical: get_pages() in hierarchical mode keeps only pages
+	// whose whole ancestor chain is in the result, so a published page under a
+	// draft or private parent (the conference page, under What's On) silently
+	// vanished from the list. Flat lists every published page; the parent's
+	// title is appended to tell same-named pages apart.
+	add_filter( 'list_pages', 'qhta_commerce_event_page_option_label', 10, 2 );
+
 	wp_dropdown_pages(
 		array(
 			'name'              => esc_attr( QHTA_EVENT_PAGE_META ),
@@ -97,16 +107,71 @@ function qhta_commerce_event_page_field() {
 			'show_option_none'  => esc_html__( '— None —', 'qhta-commerce' ),
 			'option_none_value' => '0',
 			'class'             => 'select short',
+			'hierarchical'      => 0,
+			'sort_column'       => 'post_title',
+			// Explicit, not just the default: the redirect sends buyers here, so
+			// a private page is never a valid target.
+			'post_status'       => 'publish',
 		)
 	);
 
+	remove_filter( 'list_pages', 'qhta_commerce_event_page_option_label', 10 );
+
 	echo wc_help_tip( __( 'Ticket buyers are sent here instead of the product page. Leave blank for normal products.', 'qhta-commerce' ) ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- wc_help_tip() escapes.
-	echo '</p></div>';
+	echo '</p>';
+
+	woocommerce_wp_checkbox(
+		array(
+			'id'          => QHTA_ASK_DIETARY_META,
+			'label'       => __( 'Ask dietary requirements', 'qhta-commerce' ),
+			'description' => __( 'Show the dietary question at checkout for this event.', 'qhta-commerce' ),
+			'value'       => $product_object && 'yes' === $product_object->get_meta( QHTA_ASK_DIETARY_META ) ? 'yes' : 'no',
+			'cbvalue'     => 'yes',
+		)
+	);
+
+	woocommerce_wp_textarea_input(
+		array(
+			'id'          => QHTA_DIETARY_OPTIONS_META,
+			'label'       => __( 'Dietary options', 'qhta-commerce' ),
+			'description' => __( 'One option per line. End a line with * to require details (e.g. Other / allergy *). Leave blank for the default list.', 'qhta-commerce' ),
+			'desc_tip'    => true,
+			'value'       => $product_object ? (string) $product_object->get_meta( QHTA_DIETARY_OPTIONS_META ) : '',
+			'rows'        => 7,
+		)
+	);
+
+	echo '</div>';
 }
 add_action( 'woocommerce_product_options_general_product_data', 'qhta_commerce_event_page_field' );
 
 /**
- * Save the Event page. 0 (None) deletes the meta.
+ * Append the parent page's title to an Event page option.
+ *
+ * Only hooked for the duration of the dropdown above, so no other page list on
+ * the site is touched.
+ *
+ * @param string  $title Option label.
+ * @param WP_Post $page  Page the option is for.
+ * @return string
+ */
+function qhta_commerce_event_page_option_label( $title, $page ) {
+	if ( empty( $page->post_parent ) ) {
+		return $title;
+	}
+
+	$parent = get_the_title( $page->post_parent );
+
+	return '' !== $parent ? $title . ' (' . $parent . ')' : $title;
+}
+
+/**
+ * Save the event fields.
+ *
+ * Event page: 0 (None) deletes the meta. Ask dietary: 'yes' / 'no' — an
+ * unticked checkbox posts nothing, so the Event page field's presence is what
+ * says this form was submitted. Dietary options: one per line, trimmed, blanks
+ * and duplicates dropped; empty deletes the meta, meaning "default list".
  *
  * WooCommerce verifies its own meta-box nonce before this action fires.
  *
@@ -119,12 +184,24 @@ function qhta_commerce_save_event_page_field( $product ) {
 	}
 
 	$page_id = absint( wp_unslash( $_POST[ QHTA_EVENT_PAGE_META ] ) );
+	$ask     = isset( $_POST[ QHTA_ASK_DIETARY_META ] ) ? 'yes' : 'no';
+	$options = isset( $_POST[ QHTA_DIETARY_OPTIONS_META ] ) ? sanitize_textarea_field( wp_unslash( $_POST[ QHTA_DIETARY_OPTIONS_META ] ) ) : '';
 	// phpcs:enable
 
 	if ( $page_id ) {
 		$product->update_meta_data( QHTA_EVENT_PAGE_META, $page_id );
 	} else {
 		$product->delete_meta_data( QHTA_EVENT_PAGE_META );
+	}
+
+	$product->update_meta_data( QHTA_ASK_DIETARY_META, $ask );
+
+	$lines = array_unique( array_filter( array_map( 'trim', explode( "\n", str_replace( array( "\r\n", "\r" ), "\n", $options ) ) ), 'strlen' ) );
+
+	if ( $lines ) {
+		$product->update_meta_data( QHTA_DIETARY_OPTIONS_META, implode( "\n", $lines ) );
+	} else {
+		$product->delete_meta_data( QHTA_DIETARY_OPTIONS_META );
 	}
 }
 add_action( 'woocommerce_admin_process_product_object', 'qhta_commerce_save_event_page_field' );

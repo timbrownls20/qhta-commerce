@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.10.0 — 28 October 2026
+
+### Fixed
+- **The Event page dropdown was missing published pages that have an
+  unpublished parent**, including the Early Career Conference page under the
+  draft or private What's On. `wp_dropdown_pages()` is hierarchical by default,
+  and in that mode `get_pages()` keeps only pages whose whole ancestor chain is
+  in the result. The dropdown is now a flat A–Z list of published pages. Pages
+  with a parent show the parent's title in brackets, so same-named pages can be
+  told apart.
+
+### Added
+- **Per-event dietary settings** in Product data -> General:
+  - **Ask dietary requirements** (`_qhta_ask_dietary`, `yes` / `no`, unticked
+    by default), which decides whether checkout asks at all;
+  - **Dietary options** (`_qhta_dietary_options`), one option per line, with a
+    trailing `*` marking an option that requires details. Blank means the
+    default list.
+
+  Checkout asks only when an Events product in the cart has the box ticked. The
+  first such product's list is used. Validation now reads "details required"
+  from the option, replacing the hard-coded `other` key. `_qhta_dietary` is
+  saved as before, so the admin order screen, the emails and the attendees
+  report are unchanged.
+- A healthcheck canary for at least one product having the box ticked.
+
+### Changed
+- **`qhta_dietary_options` filters the default list as an array of lines**, in
+  the product field's format, not a key => label array. `qhta_dietary_options()`
+  now takes a product ID and returns key => `[ label, needs_details ]`.
+- **Option keys are `sanitize_title()` of the label**, e.g. `gluten-free`,
+  replacing the old hand-written `gluten_free`. This only affects
+  `_qhta_dietary_choice` on new orders.
+
+**After deploy:** tick **Ask dietary requirements** on product 4311. Until that
+box is ticked, no event asks the dietary question.
+
 ## 1.9.0 — 28 October 2026
 
 The Events release: what selling Early Careers Conference tickets through

@@ -260,6 +260,35 @@ function qhta_commerce_healthcheck_checks( $checks ) {
 				},
 			),
 			array(
+				'id'       => 'event-ask-dietary-in-use',
+				'label'    => __( 'An event asks dietary requirements', 'qhta-commerce' ),
+				'why'      => __( 'The dietary question is off per event unless "Ask dietary requirements" is ticked on the product. No product carrying _qhta_ask_dietary = yes means no ticket buyer is being asked — fine if no event is catered, a missed tick if one is.', 'qhta-commerce' ),
+				'severity' => 'warning',
+				'test'     => function () {
+					global $wpdb;
+
+					// phpcs:ignore WordPress.DB.DirectDatabaseQuery -- a once-daily count on one meta key.
+					$count = (int) $wpdb->get_var(
+						$wpdb->prepare(
+							"SELECT COUNT(meta_id) FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = 'yes'",
+							QHTA_ASK_DIETARY_META
+						)
+					);
+
+					if ( 0 === $count ) {
+						return qhta_healthcheck_fail( __( 'No product has "Ask dietary requirements" ticked.', 'qhta-commerce' ) );
+					}
+
+					return qhta_healthcheck_pass(
+						sprintf(
+							/* translators: %d: number of products. */
+							_n( '%d product asks.', '%d products ask.', $count, 'qhta-commerce' ),
+							$count
+						)
+					);
+				},
+			),
+			array(
 				'id'       => 'event-page-redirect',
 				'label'    => __( 'Ticket product -> event page redirect', 'qhta-commerce' ),
 				'why'      => __( 'Ticket products are sold from an event page, not the product page. Without the template_redirect hook a ticket\'s /product/ URL shows the bare Woo product page; without the add-to-cart redirect buyers are bounced back to the form after adding and it looks as if nothing happened.', 'qhta-commerce' ),

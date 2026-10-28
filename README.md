@@ -734,14 +734,55 @@ conference page.
 
 ### Dietary requirements — `includes/event-checkout-fields.php`
 
-When the cart holds a ticket, a **Conference details** block appears after the
-customer details on the classic checkout:
+The question is set **per event**, in Product data -> General below Event page:
 
-- **Dietary requirements**: a required radio choice. The default options are
-  No special requirements, Vegetarian, Vegan, Gluten free, Dairy free, Halal,
-  and Other / allergy. Change them with `qhta_dietary_options`. The `none` and
-  `other` keys are special-cased, so keep them.
-- **Details**: free text. It becomes required when the choice is `other`.
+| Field | Product meta | Default |
+|---|---|---|
+| **Ask dietary requirements** (checkbox) | `_qhta_ask_dietary`, `yes` / `no` | **unticked**. No event asks unless the box is ticked. |
+| **Dietary options** (textarea) | `_qhta_dietary_options`, one option per line | empty, which means the default list is used |
+
+When the cart holds an Events product with the box ticked, a **Conference
+details** block appears after the customer details on the classic checkout:
+
+- **Dietary requirements**: a required radio choice from that event's list.
+- **Details**: free text. It becomes required when the chosen option needs
+  details.
+
+**Option format:**
+- Write one label per line, exactly as buyers should see it.
+- End a line with `*` to mark it "details required". The `*` isn't shown at
+  checkout.
+- Blank lines and duplicates are dropped on save.
+- Each option's key (stored in `_qhta_dietary_choice`) is
+  `sanitize_title( label )`, e.g. `gluten-free`.
+
+The **default list**:
+
+```
+No special requirements
+Vegetarian
+Vegan
+Gluten free
+Dairy free
+Halal
+Other / allergy (please give details) *
+```
+
+`qhta_dietary_options` filters this default list only, as an **array of lines**
+in the same format. An event's own list is never filtered. (Before 1.10.0 the
+filter took and returned a key => label array.)
+
+**More than one event in a cart:** the question comes from the **first** cart
+item that is in an Events category and has the box ticked, using that event's
+list. Nothing else is asked.
+
+Edge cases:
+- Box ticked with no options entered: the default list is used.
+- Options entered with the box unticked: no question is asked, and the list is
+  kept for later.
+- A non-Events product with the box ticked: ignored.
+- Renaming an option changes its key, but past orders keep their saved
+  `_qhta_dietary` string, so reports and emails for them are unaffected.
 
 It is hooked on `woocommerce_checkout_after_customer_details`, not into the
 `order` field group, because order notes are off and that hides the group.
@@ -1085,11 +1126,11 @@ add_filter( 'qhta_commerce_offline_gateway_ids', function ( $ids ) {
 	return array( 'bacs' ); // let cheque through for everyone
 } );
 
-// The dietary options at checkout, key => label. Keep 'none' and 'other' —
-// 'other' is what makes the Details box required.
-add_filter( 'qhta_dietary_options', function ( $options ) {
-	$options['kosher'] = 'Kosher';
-	return $options;
+// The DEFAULT dietary options — used by any event whose own Dietary options
+// field is blank. An array of lines; a trailing * means "details required".
+add_filter( 'qhta_dietary_options', function ( $lines ) {
+	$lines[] = 'Kosher';
+	return $lines;
 } );
 
 // Order statuses the Event attendees report counts — defaults to processing,

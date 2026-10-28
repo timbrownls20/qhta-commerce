@@ -3,12 +3,18 @@
  * Event checkout fields — dietary requirements.
  *
  * Adds "Dietary requirements" to the classic checkout when the cart contains an
- * Events-category product (e.g. Early Careers Conference, product 4311):
- *   - a required choice from a preset list (radio buttons), and
- *   - a details box, required when "Other / allergy" is chosen.
+ * Events-category product that has "Ask dietary requirements" ticked (product
+ * meta _qhta_ask_dietary, set in Product data -> General — unticked by default):
+ *   - a required choice from that event's list (radio buttons), and
+ *   - a details box, required when the chosen option needs details.
+ *
+ * The list is the event's own _qhta_dietary_options, one label per line with a
+ * trailing * marking "details required", or the default list when that is
+ * empty.
  *
  * Saved to order meta, shown in wp-admin and in order emails:
- *   _qhta_dietary_choice   option key, e.g. "vegetarian"
+ *   _qhta_dietary_choice   option key (sanitize_title of the label), e.g.
+ *                          "gluten-free"
  *   _qhta_dietary_details  free text
  *   _qhta_dietary          combined display string, e.g. "Other / allergy: nut
  *                          allergy" — the one the admin screen, emails and the
@@ -17,7 +23,7 @@
  * One box per order, not per attendee — the placeholder asks bookers to list
  * each person. Classic checkout only: the block checkout ignores these hooks.
  *
- * The option list is filterable: qhta_dietary_options.
+ * The default list is filterable, as an array of lines: qhta_dietary_options.
  *
  * @package QHTA_Commerce
  */
@@ -27,25 +33,88 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Preset dietary options, key => label.
+ * Product meta: whether this event asks the dietary question, 'yes' / 'no'.
  *
- * "none" and "other" are special: "other" makes the details box required.
- *
- * @return array
+ * Unset reads as 'no' — no event asks unless somebody ticks the box.
  */
-function qhta_dietary_options() {
-	return apply_filters(
+const QHTA_ASK_DIETARY_META = '_qhta_ask_dietary';
+
+/**
+ * Product meta: this event's dietary options, one label per line.
+ *
+ * A trailing * marks an option that needs details. Empty or unset means the
+ * default list.
+ */
+const QHTA_DIETARY_OPTIONS_META = '_qhta_dietary_options';
+
+/**
+ * The default option lines, used when an event sets none of its own.
+ *
+ * Filterable as an array of lines, in the same format as the product field:
+ *
+ *   add_filter( 'qhta_dietary_options', function ( $lines ) {
+ *       $lines[] = 'Kosher';
+ *       return $lines;
+ *   } );
+ *
+ * @return string[]
+ */
+function qhta_dietary_default_lines() {
+	return (array) apply_filters(
 		'qhta_dietary_options',
 		array(
-			'none'        => __( 'No special requirements', 'qhta-commerce' ),
-			'vegetarian'  => __( 'Vegetarian', 'qhta-commerce' ),
-			'vegan'       => __( 'Vegan', 'qhta-commerce' ),
-			'gluten_free' => __( 'Gluten free', 'qhta-commerce' ),
-			'dairy_free'  => __( 'Dairy free', 'qhta-commerce' ),
-			'halal'       => __( 'Halal', 'qhta-commerce' ),
-			'other'       => __( 'Other / allergy (please give details)', 'qhta-commerce' ),
+			__( 'No special requirements', 'qhta-commerce' ),
+			__( 'Vegetarian', 'qhta-commerce' ),
+			__( 'Vegan', 'qhta-commerce' ),
+			__( 'Gluten free', 'qhta-commerce' ),
+			__( 'Dairy free', 'qhta-commerce' ),
+			__( 'Halal', 'qhta-commerce' ),
+			__( 'Other / allergy (please give details)', 'qhta-commerce' ) . ' *',
 		)
 	);
+}
+
+/**
+ * Dietary options for an event: key => [ label, needs_details ].
+ *
+ * The event's own list when it has one, otherwise the default. Keys are
+ * sanitize_title() of the label, so renaming an option changes its key — past
+ * orders are unaffected, since everything downstream reads the saved display
+ * string in _qhta_dietary, not the key.
+ *
+ * @param int $product_id Event (parent) product ID, or 0 for the default list.
+ * @return array
+ */
+function qhta_dietary_options( $product_id = 0 ) {
+	$custom  = '';
+	$product = $product_id ? wc_get_product( $product_id ) : null;
+
+	if ( $product ) {
+		$custom = trim( (string) $product->get_meta( QHTA_DIETARY_OPTIONS_META ) );
+	}
+
+	$lines = '' !== $custom ? explode( "\n", $custom ) : qhta_dietary_default_lines();
+
+	$options = array();
+
+	foreach ( $lines as $line ) {
+		$line          = trim( (string) $line );
+		$needs_details = '*' === substr( $line, -1 );
+		$label         = $needs_details ? rtrim( substr( $line, 0, -1 ) ) : $line;
+		$key           = sanitize_title( $label );
+
+		// A blank line, or a second line that slugs to the same key: first wins.
+		if ( '' === $key || isset( $options[ $key ] ) ) {
+			continue;
+		}
+
+		$options[ $key ] = array(
+			'label'         => $label,
+			'needs_details' => $needs_details,
+		);
+	}
+
+	return $options;
 }
 
 /**
@@ -92,6 +161,57 @@ function qhta_commerce_cart_has_non_event() {
 }
 
 /**
+ * The event whose dietary question checkout asks, or 0 for none.
+ *
+ * The parent ID of the first cart item that is in an Events category AND has
+ * "Ask dietary requirements" ticked. Several events in one cart is unlikely;
+ * when it happens, the first ticked event's list is the one asked.
+ *
+ * @return int
+ */
+function qhta_commerce_cart_dietary_product_id() {
+	if ( ! function_exists( 'WC' ) || ! WC()->cart || WC()->cart->is_empty() ) {
+		return 0;
+	}
+
+	foreach ( WC()->cart->get_cart() as $item ) {
+		$product_id = (int) $item['product_id'];
+
+		if ( ! qhta_commerce_is_event_product( $product_id ) ) {
+			continue;
+		}
+
+		$product = wc_get_product( $product_id );
+
+		if ( $product && 'yes' === $product->get_meta( QHTA_ASK_DIETARY_META ) ) {
+			return $product_id;
+		}
+	}
+
+	return 0;
+}
+
+/**
+ * The posted dietary choice and details, sanitised.
+ *
+ * The choice is only ever compared against the resolved option keys, so an
+ * unknown value simply fails that lookup.
+ *
+ * @return array { choice, details }
+ */
+function qhta_commerce_posted_dietary() {
+	// phpcs:disable WordPress.Security.NonceVerification.Missing -- nonce checked by WooCommerce checkout.
+	$choice  = isset( $_POST['qhta_dietary_choice'] ) && is_string( $_POST['qhta_dietary_choice'] ) ? sanitize_text_field( wp_unslash( $_POST['qhta_dietary_choice'] ) ) : '';
+	$details = isset( $_POST['qhta_dietary_details'] ) && is_string( $_POST['qhta_dietary_details'] ) ? trim( sanitize_textarea_field( wp_unslash( $_POST['qhta_dietary_details'] ) ) ) : '';
+	// phpcs:enable
+
+	return array(
+		'choice'  => $choice,
+		'details' => $details,
+	);
+}
+
+/**
  * Render the fields.
  *
  * Hooked after customer details rather than into the "order" field group,
@@ -101,7 +221,9 @@ function qhta_commerce_cart_has_non_event() {
  * @param WC_Checkout|null $checkout Checkout object, when the hook passes one.
  */
 function qhta_commerce_render_dietary_field( $checkout = null ) {
-	if ( ! qhta_commerce_cart_has_event() ) {
+	$product_id = qhta_commerce_cart_dietary_product_id();
+
+	if ( ! $product_id ) {
 		return;
 	}
 
@@ -115,7 +237,7 @@ function qhta_commerce_render_dietary_field( $checkout = null ) {
 			'type'     => 'radio',
 			'label'    => __( 'Dietary requirements', 'qhta-commerce' ),
 			'required' => true,
-			'options'  => qhta_dietary_options(),
+			'options'  => wp_list_pluck( qhta_dietary_options( $product_id ), 'label' ),
 			'class'    => array( 'form-row-wide' ),
 		),
 		$checkout->get_value( 'qhta_dietary_choice' )
@@ -138,25 +260,25 @@ function qhta_commerce_render_dietary_field( $checkout = null ) {
 add_action( 'woocommerce_checkout_after_customer_details', 'qhta_commerce_render_dietary_field' );
 
 /**
- * Validate: a known choice, and details when the choice is "other".
+ * Validate: a known choice, and details when that choice needs them.
  */
 function qhta_commerce_validate_dietary_field() {
-	if ( ! qhta_commerce_cart_has_event() ) {
+	$product_id = qhta_commerce_cart_dietary_product_id();
+
+	if ( ! $product_id ) {
 		return;
 	}
 
-	$options = qhta_dietary_options();
-	// phpcs:disable WordPress.Security.NonceVerification.Missing -- nonce checked by WooCommerce checkout.
-	$choice  = isset( $_POST['qhta_dietary_choice'] ) ? sanitize_key( wp_unslash( $_POST['qhta_dietary_choice'] ) ) : '';
-	$details = isset( $_POST['qhta_dietary_details'] ) ? trim( sanitize_textarea_field( wp_unslash( $_POST['qhta_dietary_details'] ) ) ) : '';
-	// phpcs:enable
+	$options = qhta_dietary_options( $product_id );
+	$posted  = qhta_commerce_posted_dietary();
+	$choice  = $posted['choice'];
 
 	if ( '' === $choice || ! isset( $options[ $choice ] ) ) {
 		wc_add_notice( __( 'Please choose a dietary requirement option.', 'qhta-commerce' ), 'error' );
 		return;
 	}
 
-	if ( 'other' === $choice && '' === $details ) {
+	if ( $options[ $choice ]['needs_details'] && '' === $posted['details'] ) {
 		wc_add_notice( __( 'Please give details of your dietary requirements or allergy.', 'qhta-commerce' ), 'error' );
 	}
 }
@@ -172,21 +294,22 @@ add_action( 'woocommerce_checkout_process', 'qhta_commerce_validate_dietary_fiel
  * @param array    $data  Posted checkout data (unused).
  */
 function qhta_commerce_save_dietary_field( $order, $data ) {
-	// phpcs:disable WordPress.Security.NonceVerification.Missing -- nonce checked by WooCommerce checkout.
-	if ( ! isset( $_POST['qhta_dietary_choice'] ) ) {
+	$product_id = qhta_commerce_cart_dietary_product_id();
+
+	if ( ! $product_id ) {
 		return;
 	}
 
-	$options = qhta_dietary_options();
-	$choice  = sanitize_key( wp_unslash( $_POST['qhta_dietary_choice'] ) );
-	$details = isset( $_POST['qhta_dietary_details'] ) ? trim( sanitize_textarea_field( wp_unslash( $_POST['qhta_dietary_details'] ) ) ) : '';
-	// phpcs:enable
+	$options = qhta_dietary_options( $product_id );
+	$posted  = qhta_commerce_posted_dietary();
+	$choice  = $posted['choice'];
+	$details = $posted['details'];
 
 	if ( ! isset( $options[ $choice ] ) ) {
 		return;
 	}
 
-	$label   = $options[ $choice ];
+	$label   = $options[ $choice ]['label'];
 	$display = '' !== $details ? $label . ': ' . $details : $label;
 
 	$order->update_meta_data( '_qhta_dietary_choice', $choice );
