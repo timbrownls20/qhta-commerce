@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), store checkout tweaks, and an "Access your resources" section on the thank-you page. No theme presentation, no conference domain logic.
- * Version:           1.10.0
+ * Version:           1.10.1
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.10.0' );
+define( 'QHTA_COMMERCE_VERSION', '1.10.1' );
 
 /**
  * Post meta holding the product ID that unlocks a page.

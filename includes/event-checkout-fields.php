@@ -214,9 +214,19 @@ function qhta_commerce_posted_dietary() {
 /**
  * Render the fields.
  *
- * Hooked after customer details rather than into the "order" field group,
- * because that group is hidden when order notes are off — which they are, see
- * the checkout tweaks.
+ * On woocommerce_after_order_notes: inside the customer-details column, below
+ * where order notes would be. That action fires whether or not order notes are
+ * enabled — only the notes field itself is switched off — so the block sits
+ * in the form's left column. It used to hang off
+ * woocommerce_checkout_after_customer_details, which is *outside* that column
+ * set: the block ran full width and pushed the floated "Your order" panel down.
+ *
+ * The radios are hand-rolled rather than woocommerce_form_field( 'radio' ),
+ * which puts every option's label on its own line under its radio, bolds each
+ * like a field label, and repeats the required asterisk on every option. Here
+ * the question is a legend carrying the one asterisk, and each radio sits
+ * inline inside its own label. Same field name and value, so validation and
+ * save are untouched. Spacing and weight are in assets/qhta-commerce.css.
  *
  * @param WC_Checkout|null $checkout Checkout object, when the hook passes one.
  */
@@ -228,36 +238,44 @@ function qhta_commerce_render_dietary_field( $checkout = null ) {
 	}
 
 	$checkout = $checkout ? $checkout : WC()->checkout();
+	$current  = (string) $checkout->get_value( 'qhta_dietary_choice' );
 
 	echo '<div class="qhta-event-fields"><h3>' . esc_html__( 'Conference details', 'qhta-commerce' ) . '</h3>';
 
-	woocommerce_form_field(
-		'qhta_dietary_choice',
-		array(
-			'type'     => 'radio',
-			'label'    => __( 'Dietary requirements', 'qhta-commerce' ),
-			'required' => true,
-			'options'  => wp_list_pluck( qhta_dietary_options( $product_id ), 'label' ),
-			'class'    => array( 'form-row-wide' ),
-		),
-		$checkout->get_value( 'qhta_dietary_choice' )
+	echo '<fieldset class="form-row form-row-wide validate-required qhta-dietary-choice" id="qhta_dietary_choice_field">';
+	printf(
+		'<legend class="qhta-dietary-heading">%1$s&nbsp;<abbr class="required" title="%2$s">*</abbr></legend>',
+		esc_html__( 'Dietary requirements', 'qhta-commerce' ),
+		esc_attr__( 'required', 'qhta-commerce' )
 	);
+
+	foreach ( qhta_dietary_options( $product_id ) as $key => $option ) {
+		printf(
+			'<label class="qhta-dietary-option"><input type="radio" class="input-radio" name="qhta_dietary_choice" value="%1$s"%2$s> %3$s</label>',
+			esc_attr( $key ),
+			checked( $current, $key, false ),
+			esc_html( $option['label'] )
+		);
+	}
+
+	echo '</fieldset>';
 
 	woocommerce_form_field(
 		'qhta_dietary_details',
 		array(
-			'type'        => 'textarea',
-			'label'       => __( 'Details', 'qhta-commerce' ),
-			'placeholder' => __( 'Allergies or other needs. If booking for several people, list each name and their requirements.', 'qhta-commerce' ),
-			'required'    => false,
-			'class'       => array( 'form-row-wide' ),
+			'type'              => 'textarea',
+			'label'             => __( 'Details', 'qhta-commerce' ),
+			'placeholder'       => __( 'Allergies or other needs. If booking for several people, list each name and their requirements.', 'qhta-commerce' ),
+			'required'          => false,
+			'class'             => array( 'form-row-wide', 'qhta-dietary-details' ),
+			'custom_attributes' => array( 'rows' => 2 ),
 		),
 		$checkout->get_value( 'qhta_dietary_details' )
 	);
 
 	echo '</div>';
 }
-add_action( 'woocommerce_checkout_after_customer_details', 'qhta_commerce_render_dietary_field' );
+add_action( 'woocommerce_after_order_notes', 'qhta_commerce_render_dietary_field' );
 
 /**
  * Validate: a known choice, and details when that choice needs them.

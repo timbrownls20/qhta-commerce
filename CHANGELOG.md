@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.10.1 — 28 October 2026
+
+From seeing the dietary question on the live checkout.
+
+### Fixed
+- **The dietary block pushed "Your order" down the page.** It was hooked on
+  `woocommerce_checkout_after_customer_details`, which is outside the two
+  customer-details columns, so it ran full width. It now hangs off
+  `woocommerce_after_order_notes`, inside the left column. That action fires
+  even with order notes disabled.
+- **The radios read as a stack of separate required fields.** WooCommerce's
+  `radio` field type put each label on its own line under its radio, bolded
+  each like a field label, and added the red asterisk to every option. The
+  radios are now hand-written instead:
+  - "Dietary requirements" is a legend heading and carries the only asterisk;
+  - each option is plain text with its radio inline beside it.
+
+  The field name and values are unchanged, so validation and saving are
+  untouched.
+- **The Details box is two rows high**, not the theme's tall default.
+
+### Changed
+- `assets/qhta-commerce.css` now also styles `.qhta-event-fields`. That falls
+  under the carve-out: the block is a component this plugin creates.
+- Updated the dietary-field healthcheck canary to watch the new hook.
+
 ## 1.10.0 — 28 October 2026
 
 ### Fixed

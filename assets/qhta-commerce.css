@@ -3,8 +3,8 @@
  *
  * Scoped entirely to this plugin's own components. No element selectors, no
  * utility classes, nothing that can reach the theme: every rule below starts at
- * .qhta-member-banner or .qhta-cart-button, so this file cannot collide with
- * Astra or with qhta-theme-extras.
+ * .qhta-member-banner, .qhta-cart-button or .qhta-event-fields, so this file
+ * cannot collide with Astra or with qhta-theme-extras.
  *
  * Brand tokens are declared on the components rather than on :root for the same
  * reason — a plugin has no business defining site-wide custom properties, and a
@@ -150,4 +150,47 @@
 .menu-item .qhta-cart-button,
 .menu-item .qhta-cart-button:hover {
 	text-decoration: none;
+}
+
+/* -------------------------------------------------------------------------
+ * Event checkout — dietary requirements
+ * ---------------------------------------------------------------------- */
+
+/*
+ * The theme styles every checkout label as a bold block field label. Here only
+ * the question (the legend) reads that way; the options are plain text with
+ * the radio inline beside each, one option per line. The fieldset loses the
+ * browser's default border and padding so it lines up with the form rows
+ * around it.
+ */
+.qhta-event-fields .qhta-dietary-choice {
+	margin: 0 0 1em;
+	padding: 0;
+	border: 0;
+	min-width: 0;
+}
+
+.qhta-event-fields .qhta-dietary-heading {
+	margin: 0 0 0.5em;
+	padding: 0;
+	font-weight: 600;
+}
+
+.qhta-event-fields .qhta-dietary-option {
+	display: block;
+	margin: 0 0 0.35em;
+	font-weight: normal;
+	cursor: pointer;
+}
+
+.qhta-event-fields .qhta-dietary-option .input-radio {
+	display: inline-block;
+	margin: 0 0.5em 0 0;
+	vertical-align: middle;
+}
+
+/* Two lines, not the theme's tall default. The buyer can still drag it. */
+.qhta-event-fields .qhta-dietary-details textarea {
+	height: auto;
+	min-height: 0;
 }

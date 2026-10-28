@@ -308,7 +308,8 @@ header. Markup **and** styling both live here — see the carve-out under Scope.
 `assets/qhta-commerce.css`, enqueued on the front end while the store is
 visible — nothing loads before go-live, since neither component renders then.
 
-It is scoped to the classes above: no element selectors, nothing that can reach
+It is scoped to the classes above, plus the event checkout block
+(`.qhta-event-fields`, see Events): no element selectors, nothing that can reach
 the theme, and the brand tokens (navy `#1d3461`, teal `#3ecfb2`, accent
 `#8a1538`) are declared on the components rather than on `:root`, so a plugin
 never defines site-wide custom properties.
@@ -784,8 +785,23 @@ Edge cases:
 - Renaming an option changes its key, but past orders keep their saved
   `_qhta_dietary` string, so reports and emails for them are unaffected.
 
-It is hooked on `woocommerce_checkout_after_customer_details`, not into the
-`order` field group, because order notes are off and that hides the group.
+**Placement:** the block is hooked on `woocommerce_after_order_notes`, so it
+sits in the left-hand customer-details column, below where order notes would
+be. That action fires even with order notes off. Only the notes field is
+switched off, not the hook. Before 1.10.1 it hung off
+`woocommerce_checkout_after_customer_details`, which is outside the columns, so
+it ran full width and pushed "Your order" down the page.
+
+**Markup:** the radios are hand-written, not WooCommerce's `radio` field type.
+That type puts each option's label on its own line under the radio, styles
+each one as a bold field label, and repeats the required asterisk on every
+option. Instead:
+- the question is a `<legend>` and carries the only asterisk;
+- each radio sits inline inside its own label;
+- the Details box is two rows high.
+
+Spacing and weight live in `assets/qhta-commerce.css` under `.qhta-event-fields`.
+That is the CSS carve-out: this block is a component the plugin creates.
 
 Saved through the order object, so it works with HPOS and legacy storage:
 

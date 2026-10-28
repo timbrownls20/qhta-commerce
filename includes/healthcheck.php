@@ -247,10 +247,10 @@ function qhta_commerce_healthcheck_checks( $checks ) {
 			array(
 				'id'       => 'event-dietary-field',
 				'label'    => __( 'Event checkout dietary field', 'qhta-commerce' ),
-				'why'      => __( 'Rendered on woocommerce_checkout_after_customer_details and saved on woocommerce_checkout_create_order. Lose the first and ticket buyers are never asked; lose the second and they are asked but the answer is thrown away — the caterer finds out on the day.', 'qhta-commerce' ),
+				'why'      => __( 'Rendered on woocommerce_after_order_notes and saved on woocommerce_checkout_create_order. Lose the first and ticket buyers are never asked; lose the second and they are asked but the answer is thrown away — the caterer finds out on the day.', 'qhta-commerce' ),
 				'severity' => 'warning',
 				'test'     => function () {
-					$rendered = qhta_healthcheck_assert_hooked( 'woocommerce_checkout_after_customer_details', 'qhta_commerce_render_dietary_field' );
+					$rendered = qhta_healthcheck_assert_hooked( 'woocommerce_after_order_notes', 'qhta_commerce_render_dietary_field' );
 
 					if ( ! $rendered['ok'] ) {
 						return $rendered;
