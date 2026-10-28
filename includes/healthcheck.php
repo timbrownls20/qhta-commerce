@@ -244,6 +244,45 @@ function qhta_commerce_healthcheck_checks( $checks ) {
 					return qhta_healthcheck_pass( $hooked['detail'] );
 				},
 			),
+			array(
+				'id'       => 'event-dietary-field',
+				'label'    => __( 'Event checkout dietary field', 'qhta-commerce' ),
+				'why'      => __( 'Rendered on woocommerce_checkout_after_customer_details and saved on woocommerce_checkout_create_order. Lose the first and ticket buyers are never asked; lose the second and they are asked but the answer is thrown away — the caterer finds out on the day.', 'qhta-commerce' ),
+				'severity' => 'warning',
+				'test'     => function () {
+					$rendered = qhta_healthcheck_assert_hooked( 'woocommerce_checkout_after_customer_details', 'qhta_commerce_render_dietary_field' );
+
+					if ( ! $rendered['ok'] ) {
+						return $rendered;
+					}
+
+					return qhta_healthcheck_assert_hooked( 'woocommerce_checkout_create_order', 'qhta_commerce_save_dietary_field' );
+				},
+			),
+			array(
+				'id'       => 'event-page-redirect',
+				'label'    => __( 'Ticket product -> event page redirect', 'qhta-commerce' ),
+				'why'      => __( 'Ticket products are sold from an event page, not the product page. Without the template_redirect hook a ticket\'s /product/ URL shows the bare Woo product page; without the add-to-cart redirect buyers are bounced back to the form after adding and it looks as if nothing happened.', 'qhta-commerce' ),
+				'severity' => 'warning',
+				'test'     => function () {
+					$product = qhta_healthcheck_assert_hooked( 'template_redirect', 'qhta_commerce_redirect_event_product' );
+
+					if ( ! $product['ok'] ) {
+						return $product;
+					}
+
+					return qhta_healthcheck_assert_hooked( 'woocommerce_add_to_cart_redirect', 'qhta_commerce_event_add_to_cart_redirect' );
+				},
+			),
+			array(
+				'id'       => 'event-page-meta-in-use',
+				'label'    => __( 'Event page field _qhta_event_page_id', 'qhta-commerce' ),
+				'why'      => __( 'The per-product pairing of a ticket with the page it is sold from. No rows carrying it means no ticket has an event page set, so every event redirect is a no-op.', 'qhta-commerce' ),
+				'severity' => 'warning',
+				'test'     => function () {
+					return qhta_healthcheck_assert_meta_in_use( QHTA_EVENT_PAGE_META );
+				},
+			),
 		)
 	);
 

@@ -21,7 +21,7 @@ A new dependency with no canary is the silent-failure risk qhta-healthcheck exis
   *"no canaries defined"*. That is expected during the rollout, not a bug: each plugin joins on its
   own next deploy, no coordinated release needed.
 
-## This plugin's canaries (14)
+## This plugin's canaries (17)
 
 | Canary | Sev | Watches |
 |---|---|---|
@@ -39,6 +39,9 @@ A new dependency with no canary is the silent-failure risk qhta-healthcheck exis
 | Cart-count fragment | warning | `woocommerce_add_to_cart_fragments` |
 | PMPro member-pricing banner | warning | `pmpro_hasMembershipLevel`, `pmpro_url` |
 | Offline gateways limited to Events | warning | `woocommerce_available_payment_gateways` filter attached **and** each `qhta_commerce_offline_gateway_categories()` slug exists in `product_cat` |
+| Event checkout dietary field | warning | render on `woocommerce_checkout_after_customer_details` **and** save on `woocommerce_checkout_create_order` |
+| Ticket product → event page redirect | warning | `template_redirect` product redirect **and** `woocommerce_add_to_cart_redirect` |
+| Event page field `_qhta_event_page_id` | warning | product meta still carrying an event page |
 
 Two of them ask this plugin's own resolvers rather than restating a constant: the login-page check
 goes through `qhta_commerce_login_url()`, and the store check through `qhta_commerce_preview_token()`.

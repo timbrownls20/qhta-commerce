@@ -49,6 +49,21 @@ function qhta_commerce_offline_gateway_categories() {
 }
 
 /**
+ * Is this product in an Events category?
+ *
+ * The single test for "is this a ticket" — the gateway filter, the dietary
+ * field, the checkout notices and the attendees report all ask here, so the
+ * category list is read in one place. Pass the parent ID for a variation;
+ * variations have no categories of their own.
+ *
+ * @param int $product_id Product (parent) ID.
+ * @return bool
+ */
+function qhta_commerce_is_event_product( $product_id ) {
+	return has_term( qhta_commerce_offline_gateway_categories(), 'product_cat', (int) $product_id );
+}
+
+/**
  * Gateway IDs treated as offline, i.e. removed from non-Events purchases.
  *
  * @return string[]
@@ -117,10 +132,8 @@ function qhta_commerce_limit_offline_gateways( $gateways ) {
 		return $gateways;
 	}
 
-	$categories = qhta_commerce_offline_gateway_categories();
-
 	foreach ( $product_ids as $product_id ) {
-		if ( has_term( $categories, 'product_cat', $product_id ) ) {
+		if ( qhta_commerce_is_event_product( $product_id ) ) {
 			return $gateways;
 		}
 	}

@@ -1,6 +1,6 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Seven jobs:
+WooCommerce-side logic plugin for qhta.com.au. Eight jobs:
 
 - **gating pages behind a WooCommerce purchase**, so paid content (conference
   recordings and the like) is locked without a membership plugin;
@@ -16,7 +16,10 @@ WooCommerce-side logic plugin for qhta.com.au. Seven jobs:
   to the gated pages for what that order just bought;
 - **offline payment for Events only** — bank transfer and cheque are offered
   only when the purchase includes an Events product (conference tickets), so
-  study-package buyers only ever see Stripe.
+  study-package buyers only ever see Stripe;
+- **events (conference tickets)** — a dietary field at checkout, an attendees
+  report with CSV, and routing that sends ticket buyers to the event page they
+  bought from rather than WooCommerce's product page.
 
 ## Scope
 
@@ -625,6 +628,10 @@ telling the buyer that access arrives by email and lives in their account. It
 sets the expectation before they pay, which is the cheapest way to stop the
 "where is my product?" email a digital purchase otherwise invites.
 
+It is **hidden for a cart of conference tickets only**. Tickets unlock nothing
+under My Content, and those buyers get the ticket notice instead. See Events ->
+Checkout notices.
+
 Top of form was the call over the alternative — above the Place Order button
 (`woocommerce_review_order_before_submit`). The trade is real: above the button
 it is read at the moment of paying and cannot be scrolled past; at the top it is
@@ -712,6 +719,118 @@ print_r( array_keys( WC()->payment_gateways->get_available_payment_gateways() ) 
 Swap in a ticket product (with its variation ID as the third argument) and
 `bacs` should appear.
 
+## Events — conference tickets
+
+A product is a **ticket** when it is in an Events category: slug `events` by
+default, set through `qhta_commerce_offline_gateway_categories` (see Extension
+points). That is the only place the category is defined. The gateway filter
+above and everything in this section call `qhta_commerce_is_event_product()`,
+which reads it. Categories are matched on the **parent** product, so variations
+count.
+
+Early Careers Conference 2027 is product **4311**. Its variations are Standard
+(4312) and Preservice (4313). The product is catalog-hidden and sold from the
+conference page.
+
+### Dietary requirements — `includes/event-checkout-fields.php`
+
+When the cart holds a ticket, a **Conference details** block appears after the
+customer details on the classic checkout:
+
+- **Dietary requirements**: a required radio choice. The default options are
+  No special requirements, Vegetarian, Vegan, Gluten free, Dairy free, Halal,
+  and Other / allergy. Change them with `qhta_dietary_options`. The `none` and
+  `other` keys are special-cased, so keep them.
+- **Details**: free text. It becomes required when the choice is `other`.
+
+It is hooked on `woocommerce_checkout_after_customer_details`, not into the
+`order` field group, because order notes are off and that hides the group.
+
+Saved through the order object, so it works with HPOS and legacy storage:
+
+| Order meta | Holds |
+|---|---|
+| `_qhta_dietary_choice` | option key, e.g. `vegetarian` |
+| `_qhta_dietary_details` | the free text |
+| `_qhta_dietary` | display string, e.g. `Other / allergy: nut allergy` |
+
+The admin order screen (after the billing address), the customer and admin
+emails, and the attendees report all read `_qhta_dietary`.
+
+**Limits:** there is one box per order, not one per attendee. The placeholder
+asks bookers to list each person's needs. The field is classic checkout only,
+because the block checkout ignores these hooks.
+
+### Event attendees — `includes/event-attendees-report.php`
+
+The page is at **WooCommerce -> Event attendees** and needs `manage_woocommerce`.
+It shows one row per ticket line item, with columns for order (linked), date,
+status, event, ticket type, qty, total inc GST, buyer, school (billing company),
+email, phone, payment method and dietary. Totals by ticket type sit at the top.
+
+- **Statuses:** Processing, Completed and On hold. On hold is included so that
+  unpaid bank-transfer bookings are counted. Change the list with
+  `qhta_attendees_statuses`.
+- **One event:** add `&product_id=4311` to the page URL.
+- **CSV:** use the Download CSV button (`admin-post.php?action=qhta_attendees_csv`,
+  which is nonce- and capability-checked). The file is UTF-8 with a BOM so Excel
+  keeps accents. Any cell starting `=`, `+`, `-` or `@` gets a leading `'` so
+  Excel can't run it as a formula. That includes phone numbers written
+  `+61…`, which show the quote in Excel.
+- **Ticket type** is read from the line item's stored attributes, so it
+  survives a variation being renamed or deleted.
+- Orders are read only through `wc_get_orders()`, so the page is HPOS-safe.
+
+### Checkout notices
+
+Two lines sit at the top of the checkout form on `woocommerce_before_checkout_form`.
+They use the same priority, so they render in registration order:
+
+| Cart | My Content notice | Ticket notice |
+|---|---|---|
+| Study package only | shown | — |
+| Ticket only | — | shown |
+| Ticket + study package | shown | shown |
+
+The ticket notice reads "Your registration confirmation and tax invoice will be
+emailed to you after checkout." It is a `<p class="qhta-ticket-notice">`, the
+same pattern as the My Content `<p class="qhta-email-notice">`, and has no CSS
+of its own.
+
+### Event page — `includes/event-pages.php`
+
+Each product has an **Event page** dropdown in **Product data -> General**,
+stored as product meta **`_qhta_event_page_id`**. It holds a page ID, so it
+survives slug changes. Choosing "— None —" deletes the meta. Only a
+**published** page counts.
+
+For a product with an event page:
+
+| Route | Goes to |
+|---|---|
+| `/product/<slug>/` (GET, no `add-to-cart`) | 302 to the event page |
+| After adding it to the cart | Checkout |
+| "Continue shopping" | Event page of the first ticket in the cart |
+| "Return to shop" (empty cart) | Event page of the last product added, if it had one; otherwise the shop |
+
+The redirect skips POSTs and `add-to-cart` URLs, because the event page's
+variation form posts to the product permalink and add-to-cart links must still
+work. It is a 302 so the pairing can be removed without browser caches holding
+on to it.
+
+A product without an event page behaves exactly as before. Nothing in the code
+names a product or a URL. Set the pairing in the editor; for product 4311 it is
+"Early Career Conference" (`/whats-on/early-career-conference/`).
+
+Checking the redirect:
+
+```bash
+curl -sI https://<site>/product/<4311-slug>/ | grep -iE '^(HTTP|location)'
+```
+
+(The product is Private until launch, so a logged-out curl gets a 404. Check it
+as an admin in the browser until then.)
+
 ## Thank-you page — "Access your resources"
 
 After paying, the buyer gets a section linking straight to the gated page(s) for
@@ -796,6 +915,9 @@ qhta-commerce/
   qhta-commerce.php              Bootstrap: header, per-page field, gate. Keep thin.
   includes/healthcheck.php       qhta-healthcheck canaries.
   includes/offline-gateways.php  Bank transfer / cheque for Events only.
+  includes/event-checkout-fields.php  Dietary field; cart-has-event helpers.
+  includes/event-attendees-report.php WooCommerce -> Event attendees + CSV.
+  includes/event-pages.php       Event page field and ticket routing.
   assets/qhta-commerce.css       Banner and cart button. Shipped.
   scripts/build-zip.sh           Packages the deploy zip. Not shipped.
   README.md
@@ -867,7 +989,7 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Fourteen filters, all optional:
+Sixteen filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -961,6 +1083,19 @@ add_filter( 'qhta_commerce_offline_gateway_categories', function ( $slugs ) {
 // array( 'bacs', 'cheque' ).
 add_filter( 'qhta_commerce_offline_gateway_ids', function ( $ids ) {
 	return array( 'bacs' ); // let cheque through for everyone
+} );
+
+// The dietary options at checkout, key => label. Keep 'none' and 'other' —
+// 'other' is what makes the Details box required.
+add_filter( 'qhta_dietary_options', function ( $options ) {
+	$options['kosher'] = 'Kosher';
+	return $options;
+} );
+
+// Order statuses the Event attendees report counts — defaults to processing,
+// completed and on-hold.
+add_filter( 'qhta_attendees_statuses', function () {
+	return array( 'processing', 'completed' ); // paid only
 } );
 ```
 

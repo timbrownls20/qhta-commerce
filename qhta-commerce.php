@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), store checkout tweaks, and an "Access your resources" section on the thank-you page. No theme presentation, no conference domain logic.
- * Version:           1.8.0
+ * Version:           1.9.0
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.8.0' );
+define( 'QHTA_COMMERCE_VERSION', '1.9.0' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -1858,8 +1858,16 @@ function qhta_commerce_email_notice_text() {
  *
  * Structure and class only. Appearance belongs in qhta-theme-extras, per this
  * spec; see the README for how that sits with the shopfront CSS carve-out.
+ *
+ * Only when the cart holds something that actually unlocks content. A cart of
+ * conference tickets alone has nothing to put under My Content, so promising a
+ * link there would be wrong — the ticket notice below speaks to them instead.
  */
 function qhta_commerce_email_notice() {
+	if ( ! qhta_commerce_cart_has_non_event() ) {
+		return;
+	}
+
 	$text = qhta_commerce_email_notice_text();
 
 	if ( ! $text ) {
@@ -1869,6 +1877,28 @@ function qhta_commerce_email_notice() {
 	printf( '<p class="qhta-email-notice">%s</p>', wp_kses_post( $text ) );
 }
 add_action( 'woocommerce_before_checkout_form', 'qhta_commerce_email_notice' );
+
+/**
+ * Tell a ticket buyer what arrives after checkout.
+ *
+ * Same hook, priority and markup pattern as the email notice above, registered
+ * after it — so a mixed cart reads "your resources" then "your registration",
+ * as two lines of the same kind rather than a paragraph and a Woo notice box.
+ *
+ * Structure and class only, like the email notice; any styling is
+ * qhta-theme-extras' job.
+ */
+function qhta_commerce_ticket_notice() {
+	if ( ! qhta_commerce_cart_has_event() ) {
+		return;
+	}
+
+	printf(
+		'<p class="qhta-ticket-notice">%s</p>',
+		esc_html__( 'Your registration confirmation and tax invoice will be emailed to you after checkout.', 'qhta-commerce' )
+	);
+}
+add_action( 'woocommerce_before_checkout_form', 'qhta_commerce_ticket_notice' );
 
 
 /* -------------------------------------------------------------------------
@@ -2126,6 +2156,14 @@ add_action( 'admin_notices', 'qhta_commerce_store_hidden_notice' );
  * Offline payment gateways (bank transfer, cheque) — Events purchases only.
  */
 require_once plugin_dir_path( __FILE__ ) . 'includes/offline-gateways.php';
+
+/*
+ * Events: dietary field (defines qhta_commerce_cart_has_event(), used by the
+ * checkout notices above), the attendees report, and event-page routing.
+ */
+require_once plugin_dir_path( __FILE__ ) . 'includes/event-checkout-fields.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/event-attendees-report.php';
+require_once plugin_dir_path( __FILE__ ) . 'includes/event-pages.php';
 
 /*
  * Healthcheck canaries.

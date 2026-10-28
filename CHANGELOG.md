@@ -1,5 +1,50 @@
 # Changelog
 
+## 1.9.0 — 28 October 2026
+
+The Events release: what selling Early Careers Conference tickets through
+WooCommerce needs. A product counts as a ticket when it is in an Events
+category, read through `qhta_commerce_offline_gateway_categories()` (the 1.8.0
+gateway filter) and nowhere else. A new `qhta_commerce_is_event_product()` is
+the one test every item below uses.
+
+### Added
+1. **Dietary requirements at checkout** (`includes/event-checkout-fields.php`).
+   When the cart holds a ticket, a "Conference details" block asks for a
+   required choice from a preset list, plus a Details box that becomes
+   required for "Other / allergy". It is saved to order meta as
+   `_qhta_dietary_choice`, `_qhta_dietary_details` and `_qhta_dietary` (the
+   combined display string), and shown on the admin order screen and in order
+   emails. The options are filterable via `qhta_dietary_options`. There is one
+   box per order, and it works on classic checkout only.
+2. **WooCommerce -> Event attendees** (`includes/event-attendees-report.php`).
+   One row per ticket line item from Processing / Completed / On hold orders
+   (filterable via `qhta_attendees_statuses`), with totals by ticket type and a
+   CSV download. The CSV is UTF-8 with a BOM, and formula-injection-guarded.
+   `&product_id=` limits the list to one event. The page needs
+   `manage_woocommerce`, and orders are read only through `wc_get_orders()`.
+4. **Ticket checkout notice**: "Your registration confirmation and tax
+   invoice will be emailed to you after checkout." It appears when the cart
+   holds a ticket, and sits after the My Content notice on the same hook, using
+   the same markup pattern (`<p class="qhta-ticket-notice">`).
+5. **"Event page" product field** (`includes/event-pages.php`), in Product data
+   -> General and stored as `_qhta_event_page_id` (a page ID). For a product
+   that has one:
+   - a GET of its `/product/` URL without `add-to-cart` 302s to the event page;
+   - adding it to the cart goes straight to checkout.
+6. **Continue shopping / Return to shop** go to the event page. Continue
+   shopping uses the first ticket in the cart. Return to shop, on an empty cart,
+   uses the last product added (remembered in the Woo session); it falls back to
+   the shop when that product had no event page.
+
+### Changed
+3. **The My Content checkout notice is hidden for ticket-only carts**, since
+   tickets unlock nothing under My Content. It still shows for study-package
+   and mixed carts, via the new `qhta_commerce_cart_has_non_event()`.
+
+- Three new healthcheck canaries: the dietary field's render and save hooks,
+  the event-page redirects, and `_qhta_event_page_id` being in use.
+
 ## 1.8.0 — 28 October 2026
 
 ### Added
