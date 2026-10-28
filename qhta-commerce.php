@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       QHTA Commerce
  * Description:       WooCommerce-side custom logic for qhta.com.au — purchase-gated content pages driven by a per-page product-ID field, a My Account tab listing what the customer can reach, store preview mode, shopfront personalisation (member-pricing banner, header cart button, styling for both), store checkout tweaks, and an "Access your resources" section on the thank-you page. No theme presentation, no conference domain logic.
- * Version:           1.6.2
+ * Version:           1.8.0
  * Author:            QHTA
  * License:           GPL-2.0-or-later
  * Requires at least: 6.0
@@ -23,7 +23,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'QHTA_COMMERCE_VERSION', '1.6.2' );
+define( 'QHTA_COMMERCE_VERSION', '1.8.0' );
 
 /**
  * Post meta holding the product ID that unlocks a page.
@@ -2121,3 +2121,16 @@ function qhta_commerce_store_hidden_notice() {
 	<?php
 }
 add_action( 'admin_notices', 'qhta_commerce_store_hidden_notice' );
+
+/*
+ * Offline payment gateways (bank transfer, cheque) — Events purchases only.
+ */
+require_once plugin_dir_path( __FILE__ ) . 'includes/offline-gateways.php';
+
+/*
+ * Healthcheck canaries.
+ *
+ * Loaded last, and unconditionally: it only calls add_filter() on a hook
+ * qhta-healthcheck applies, so with that plugin absent this is inert.
+ */
+require_once plugin_dir_path( __FILE__ ) . 'includes/healthcheck.php';

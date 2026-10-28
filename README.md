@@ -1,6 +1,6 @@
 # QHTA Commerce
 
-WooCommerce-side logic plugin for qhta.com.au. Six jobs:
+WooCommerce-side logic plugin for qhta.com.au. Seven jobs:
 
 - **gating pages behind a WooCommerce purchase**, so paid content (conference
   recordings and the like) is locked without a membership plugin;
@@ -13,7 +13,10 @@ WooCommerce-side logic plugin for qhta.com.au. Six jobs:
   medium, the account username field explained, "School or Institution" made
   required, and a notice saying access arrives by email;
 - **an "Access your resources" section on the thank-you page**, linking straight
-  to the gated pages for what that order just bought.
+  to the gated pages for what that order just bought;
+- **offline payment for Events only** — bank transfer and cheque are offered
+  only when the purchase includes an Events product (conference tickets), so
+  study-package buyers only ever see Stripe.
 
 ## Scope
 
@@ -642,6 +645,73 @@ taking the help text with it. Nothing breaks: the tweak is guarded by `isset()`
 and simply becomes a no-op. The same applies to a buyer who is already logged in
 — no account fields, nothing to describe.
 
+## Offline payment — Events only
+
+Schools buying conference tickets pay by invoice, so **Direct bank transfer**
+(`bacs`) and optionally **Check payments** (`cheque`) are enabled in WooCommerce.
+Gateways are store-wide, so without this a study-package buyer would be offered
+bank transfer too — and their order would sit **On hold**, gated content locked,
+until somebody marked it Completed by hand.
+
+`includes/offline-gateways.php` filters `woocommerce_available_payment_gateways`:
+
+| Purchase contains | Gateways offered |
+|---|---|
+| Events product(s) only | Stripe, BACS, Cheque |
+| Events + study package | Stripe, BACS, Cheque |
+| No Events product | Stripe only |
+
+One Events item is enough, so a **mixed cart** can be paid entirely by bank
+transfer.
+
+**Known issue, accepted:** in a mixed order paid offline, the study package
+stays locked until the order is marked Completed, the same as the ticket.
+Completing the order unlocks both. Blocking mixed carts, or dropping BACS for
+them, were the alternatives and were not taken.
+
+Categories are matched by **slug** against the **parent** product. A variable
+ticket's cart line carries the variation in `variation_id`, and variations have
+no categories of their own.
+
+### Scoping — why this is not gated on `is_checkout()`
+
+Every other front-end hook in this plugin is page-scoped. This one is the
+exception. **Block checkout** loads gateways through the Store API, a REST request
+in which `is_checkout()` is false. Gating on it would leave the list unfiltered
+there, and bank transfer would appear for study packages. It is scoped by
+context instead:
+
+- **Admin** (not AJAX) -> untouched, so Settings -> Payments lists every gateway.
+- **Pay for order** (`order-pay` endpoint) -> reads the order being paid. There
+  is no cart on that page.
+- **Everywhere else** (classic checkout, Store API, `update_order_review`) ->
+  reads `WC()->cart`. No cart, or an empty one, leaves the list alone.
+
+### Setup (wp-admin, not code)
+
+1. WooCommerce -> Settings -> Payments -> **Direct bank transfer**: enable, enter
+   the QHTA account name, BSB and account number, and ask payers to use the
+   order number as the reference.
+2. Optionally enable **Check payments** with the postal address.
+3. Confirm the Events category slug in Products -> Categories is `events`. If it
+   is not, filter `qhta_commerce_offline_gateway_categories` (below). The
+   healthcheck canary goes amber if the slug doesn't exist.
+
+### Checking it
+
+Run on staging with WP-CLI, against a real cart:
+
+```bash
+wp eval '
+wc_load_cart();
+WC()->cart->add_to_cart( 123 );            // a study package ID
+print_r( array_keys( WC()->payment_gateways->get_available_payment_gateways() ) );
+'
+```
+
+Swap in a ticket product (with its variation ID as the third argument) and
+`bacs` should appear.
+
 ## Thank-you page — "Access your resources"
 
 After paying, the buyer gets a section linking straight to the gated page(s) for
@@ -723,9 +793,11 @@ consistency is preferred.
 
 ```
 qhta-commerce/
-  qhta-commerce.php           Bootstrap: header, per-page field, gate. Keep thin.
-  assets/qhta-commerce.css    Banner and cart button. Shipped.
-  scripts/build-zip.sh        Packages the deploy zip. Not shipped.
+  qhta-commerce.php              Bootstrap: header, per-page field, gate. Keep thin.
+  includes/healthcheck.php       qhta-healthcheck canaries.
+  includes/offline-gateways.php  Bank transfer / cheque for Events only.
+  assets/qhta-commerce.css       Banner and cart button. Shipped.
+  scripts/build-zip.sh           Packages the deploy zip. Not shipped.
   README.md
   CHANGELOG.md
 ```
@@ -795,7 +867,7 @@ stored value — you just have to know the ID.
 
 ## Extension points
 
-Twelve filters, all optional:
+Fourteen filters, all optional:
 
 ```php
 // Where a logged-in non-buyer is sent — defaults to /login/, no redirect_to.
@@ -876,6 +948,19 @@ add_filter( 'qhta_commerce_email_notice_text', function () {
 // The thank-you section's heading.
 add_filter( 'qhta_commerce_access_resources_heading', function () {
 	return 'Start reading';
+} );
+
+// Product category slugs that make a purchase eligible for offline payment —
+// defaults to array( 'events' ).
+add_filter( 'qhta_commerce_offline_gateway_categories', function ( $slugs ) {
+	$slugs[] = 'workshops';
+	return $slugs;
+} );
+
+// Gateway IDs removed from non-Events purchases — defaults to
+// array( 'bacs', 'cheque' ).
+add_filter( 'qhta_commerce_offline_gateway_ids', function ( $ids ) {
+	return array( 'bacs' ); // let cheque through for everyone
 } );
 ```
 
@@ -965,6 +1050,9 @@ you through, whatever the reason.
   there wasn't one.
 
 ## Open items
+
+- **Invoices for On-hold orders.** Check that `qhta-woo-invoice` generates on
+  On hold, and that it shows "Amount due" and bank details rather than "Paid".
 
 - Non-buyers currently go to `/login/` because there is no sales page. When one
   exists, point `qhta_commerce_sales_url` at it — filter, or edit the default in

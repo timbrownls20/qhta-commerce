@@ -1,5 +1,58 @@
 # Changelog
 
+## 1.8.0 — 28 October 2026
+
+### Added
+- **Offline payment gateways for Events purchases only**, in
+  `includes/offline-gateways.php`. Schools buying Early Careers Conference
+  tickets pay by invoice, so Direct bank transfer (`bacs`) and Check payments
+  (`cheque`) are being enabled — but WooCommerce gateways are store-wide, and a
+  study-package buyer offered bank transfer would end up On hold with their
+  content locked until somebody completed the order by hand.
+
+  `woocommerce_available_payment_gateways` now removes both unless the cart (or,
+  on the "Pay for order" page, the order) holds at least one product in the
+  `events` category. Stripe is never touched. A mixed cart keeps them — one
+  Events item is enough.
+
+  Categories are checked against the **parent** product, since a variable
+  ticket's cart line carries the variation and variations have no categories.
+
+  Deliberately **not** gated on `is_checkout()`: block checkout fetches its
+  gateways over the Store API, where `is_checkout()` is false, so that gate
+  would let bank transfer through for study packages. Admin screens (not AJAX)
+  are left alone so Settings -> Payments lists every gateway.
+
+  Two new filters: `qhta_commerce_offline_gateway_categories` (default
+  `array( 'events' )`) and `qhta_commerce_offline_gateway_ids` (default
+  `array( 'bacs', 'cheque' )`).
+- **Healthcheck canary** for it: the filter is still attached, and every
+  qualifying category slug still exists.
+
+## 1.7.0 — 12 August 2026
+
+### Added
+- **Healthcheck canaries**, in `includes/healthcheck.php`. Thirteen checks
+  registered on `qhta-healthcheck`'s `qhta_healthcheck_checks` filter, covering
+  what this plugin actually depends on: `wc_customer_bought_product()` and the
+  four other WooCommerce functions the gate calls, the `my-content` endpoint
+  being both routed *and* rewritten, the account-menu and endpoint-content
+  hooks, the gate meta key still carrying data, the login redirect target being
+  a published page, the shop page, the store being reachable by somebody, the
+  phone-field override, the thank-you resources section, the cart fragment and
+  the PMPro banner.
+
+  They live here rather than in `qhta-healthcheck` so that changing the gate and
+  changing the canary for the gate are the same diff. Nothing runs unless
+  `qhta-healthcheck` is installed — `add_filter()` on a hook nobody applies costs
+  nothing.
+
+  Two of them ask this plugin's own resolvers rather than restating a constant:
+  the login-page check goes through `qhta_commerce_login_url()`, and the store
+  check through `qhta_commerce_preview_token()`. Overriding either destination
+  therefore moves its canary with it, instead of leaving one watching a page
+  nobody is sent to any more.
+
 ## 1.6.2 — 9 August 2026
 
 ### Changed
